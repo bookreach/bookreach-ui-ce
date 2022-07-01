@@ -16,7 +16,7 @@ From our paper (see the below "Citations" section):
 
 ## How to try
 
-Open [https://bookreach.github.io/bookreach-ui/](https://bookreach.github.io/bookreach-ui/) in the browser.
+Open [https://bookreach.github.io/bookreach-ui-ce/](https://bookreach.github.io/bookreach-ui-ce/) in the browser.
 
 ### How to use the app
 

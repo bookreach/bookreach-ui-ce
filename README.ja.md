@@ -14,7 +14,7 @@
 
 ## 動作確認
 
-[https://bookreach.github.io/bookreach-ui/](https://bookreach.github.io/bookreach-ui/) をブラウザで開いてください．
+[https://bookreach.github.io/bookreach-ui-ce/](https://bookreach.github.io/bookreach-ui-ce/) をブラウザで開いてください．
 
 ### UI の操作方法
 

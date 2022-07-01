@@ -10,7 +10,7 @@ date-released: 2022-07-31
 url: "https://github.com/bookreach/bookreach-ui-ce"
 preferred-citation:
   type: conference-paper
-  title: "{BookReach-UI}: A {Book-Curation} Interface for School Librarians to Support Inquiry Learning"
+  title: "BookReach-UI: A Book-Curation Interface for School Librarians to Support Inquiry Learning"
   collection-title: "Towards Open and Trustworthy Digital Societies"
   collection-doi: 10.1007/978-3-030-91669-5
   editors:
