@@ -1,0 +1,9 @@
+### https://raw.github.com/github/gitignore/3df9bc0bd9cb0c3f5ea0904e88b9df5a378ccd59/Elm.gitignore
+
+# elm-package generated files
+elm-stuff
+# elm-repl generated files
+repl-temp-*
+
+data/
+node_modules/

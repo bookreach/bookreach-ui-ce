@@ -1,0 +1,26 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+authors:
+- family-names: "Yada"
+  given-names: "Shuntaro"
+  orcid: "https://orcid.org/0000-0002-6209-1054"
+title: "BookReach-UI Community Edition"
+version: 1.0.0
+date-released: 2022-07-31
+url: "https://github.com/bookreach/bookreach-ui-ce"
+preferred-citation:
+  type: conference-paper
+  title: "{BookReach-UI}: A {Book-Curation} Interface for School Librarians to Support Inquiry Learning"
+  booktitle: "Towards Open and Trustworthy Digital Societies",
+  authors:
+  - family-names: "Yada"
+    given-names: "Shuntaro"
+    orcid: "https://orcid.org/0000-0002-6209-1054"
+  - family-names: "Asaishi"
+    given-names: "Takuma"
+  - family-names: "Miyata"
+    given-names: "Rei"
+  publisher: "Springer International Publishing"
+  start: 96
+  end: 104
+  year: 2021
