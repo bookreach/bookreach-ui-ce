@@ -75,8 +75,8 @@ npx elm-live src/Main.elm --start-page=index.html -- --output=main.js --debug
 
 - [Bulma](https://bulma.io) CSS is used for building UI blocks (loaded via CDN in `./index.html`)
 - For book database API, the app assumes the [`json-server`](https://github.com/typicode/json-server)'s interface for simplicity
-  - [A sample API](https://sample-bookdb.herokuapp.com/) on [Heroku](https://heroku.com) returns a small size of sample data, some fields of which are flled with random meaningless values due to copyright issues. I do not assure these details about books, textbooks, etc. are authentic.
-  - The sample API needs some seconds to run because it relies on the Heroku's free tier
+  - [A sample API](https://lean-hail-roast.glitch.me/) on [Glitch](https://glitch.com) returns a small size of sample data, some fields of which are flled with random meaningless values due to copyright issues. I do not assure these details about books, textbooks, etc. are authentic.
+  - The sample API needs some seconds to run because it relies on the Glitch's free tier
   - You can use your own database and serve it with `json-server` locally
   - For the DB specification, see `./src/BookDB.elm`
 - I use VSCode with the [Elm extension](https://github.com/elm-tooling/elm-language-client-vscode) for coding.

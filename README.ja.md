@@ -74,8 +74,8 @@ npx elm-live src/Main.elm --start-page=index.html -- --output=main.js --debug
 
 - [Bulma](https://bulma.io) CSS を UI ブロックに使用しています． `./index.html` で CDN から直接読み込んでいます (npm パッケージとして取り込んではいません)
 - 図書データベースの API は [`json-server`](https://github.com/typicode/json-server) の仕様に準拠していることを前提としています．
-  - [Heroku](https://heroku.com) 上の[サンプル API](https://sample-bookdb.herokuapp.com/) は少数の図書データをサンプルとして返戻しますが， 著作権の問題でいくつかのフィールドについてランダム値を挿入しています．図書や教科書などに関するこれらデータの正しさは全く保証しないことをご承知おきください．
-  - サンプル API は Heroku の無料枠で運用しており，起動に数秒かかります
+  - [Glitch](https://glitch.com) 上の[サンプル API](https://lean-hail-roast.glitch.me/) は少数の図書データをサンプルとして返戻しますが， 著作権の問題でいくつかのフィールドについてランダム値を挿入しています．図書や教科書などに関するこれらデータの正しさは全く保証しないことをご承知おきください．
+  - サンプル API は Glitch の無料枠で運用しており，起動に数秒かかります
   - ご自身で図書データベースを作成し，`json-server` で読み込んでローカル開発できます
   - 図書データベースの仕様・要件は `./src/BookDB.elm` から読み取っていただけると思います
 - 個人的には，VSCode に [Elm extension](https://github.com/elm-tooling/elm-language-client-vscode) をインストールして開発しています
