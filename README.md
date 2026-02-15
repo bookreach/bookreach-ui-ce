@@ -2,89 +2,100 @@
 
 [日本語](./README.ja.md)
 
-A Book-Curation Interface for School Librarians to Support Inquiry Learning.
+A Book-Discovery Interface for School Librarians to Support Inquiry Learning.
 
-From our paper (see the below "Citations" section):
+From our paper (see the "Citations" section below):
 
 > As a way of collaborating with teachers, school librarians select books that are useful for inquiry-based or exploratory learning classes.
 >
 > (...)
 >
-> To enable even less experienced school librarians to easily curate appropriate books, we developed a graphical user interface that directly shows the candidate books that are topically relevant to the inquiry-based class’ subject, by making use of decimal classification classes assigned to books.
+> To enable even less experienced school librarians to easily curate appropriate books, we developed a graphical user interface that directly shows the candidate books that are topically relevant to the inquiry-based class' subject, by making use of decimal classification classes assigned to books.
 
-![Screenshot of BookReach-UI](/assets/bookreach-ui.png)
-
-## How to try
+## How to Try
 
 Open [https://bookreach.github.io/bookreach-ui-ce/](https://bookreach.github.io/bookreach-ui-ce/) in the browser.
 
-### How to use the app
+### How to Use
 
-1. Select a textbook used in the inquiry-based class
-2. Select the chapters (curriculum units) targeted in the inquiry-based class
-3. The UI returns the candidates of books relevant to the class subject are displayed along with their book covers
-4. Select as many useful books as the user chooses
-5. Selected books are automatically organised into a shareable list so that you can print it or download it as CSV and TSV for further editing
+1. Select the prefecture where your school library is located
+2. Choose the school type, grade, subject, and describe the lesson topic in free text
+3. The app predicts relevant NDC (Nippon Decimal Classification) codes via the NDL Predictor API
+4. Click "Fetch books" to search your prefecture's libraries via the Calil Unitrad API
+5. Browse results by NDC tab, view book details and library holdings
+6. Select useful books and export the list as CSV, TSV, or print it
 
-For more details, see the research article below.
+## Architecture
+
+This is a single-page Elm application with no backend server. It uses only public APIs:
+
+| API | Purpose |
+|-----|---------|
+| [Calil Unitrad](https://calil.jp/doc/api_ref.html) | Live library book search by NDC code |
+| [NDL Predictor](https://lab.ndl.go.jp/ndc/) | Predict NDC codes from free-text keywords |
+| [openBD](https://openbd.jp/) | Book cover images |
+
+The app has three stages:
+
+1. **Prefecture Selection** — Choose your prefecture (saved to localStorage)
+2. **NDC Selection** — Pick school/subject/grade, enter a topic, and select predicted NDC codes
+3. **Explorer** — Browse books, view details, filter, select, and export
 
 ## Development
 
-> This repository contains just a reference implementation of the software proposed in the paper below.
-> There's much room for improvement in app functionalities, code structures, development toolkits, etc. as you can see.
-> Any sorts of pull requests are welcome!
-> It's pleasure to have your interest, thank you so much!!
+Prerequisites:
 
-To start developing this project,
-please install:
+- [Node.js](https://nodejs.org/en/) (v18+)
+- [Elm](https://elm-lang.org/) (0.19.1, installed via npm)
 
-- [Elm (0.19.1)](https://elm-lang.org/)
-- [`node.js`](https://nodejs.org/en/)
-
-> Elm is the fantastic programming language to build a web application;
-> this novice-friendly functional language enables us to write codes steadily and confidently, with fun.
-> If you don't know Elm, please check its tutorial! It's impressive!!
->
-> The bussiness logic of bookreach-ui does not rely on npm packages, but is closed inside the pure Elm world.
-> So, you hardly need any knowledge about recent web-development toolkits at all.
-
-First, to initialise the project:
+### Setup
 
 ```bash
-npm install  # to install additional development tools
-elm install  # to activate Elm packages used in this project
+npm install          # Install dependencies (Elm, elm-watch, Sass, etc.)
+npm run build-bulma  # Compile Bulma SCSS to CSS
 ```
 
-Then, every time you changed the Elm source files, run:
+### Commands
 
-```bash
-elm make src/Main.elm --debug --output=main.js  # compile Elm codes to a JS file
+| Command | Description |
+|---------|-------------|
+| `npm start` | Start dev server with hot-reload (port 3000) |
+| `npm run build-bulma` | Compile `br-bulma.scss` to `public/br-bulma.css` |
+| `npm test` | Run Elm tests |
+| `npm run format` | Format Elm source files with elm-format |
+
+### Project Structure
+
+```
+src/
+  Main.elm          # App entry point (three-stage Explorer)
+  Api.elm           # Types, decoders, HTTP functions
+  NdcSelect.elm     # NDC selection component (free-text → NDL prediction)
+  BookFilter.elm    # Query and library filter
+  School.elm        # School type/subject/grade definitions
+  Utils.elm         # LocalStore, helpers
+
+public/
+  index.html        # HTML shell
+  custom.js         # Unitrad search/polling, mapping, ports
+  custom.css        # Custom styles
+  data/
+    prefectures.json   # 47 Japanese prefectures
+    ndc9-lv3.json      # NDC level-3 labels
+
+br-bulma.scss       # Bulma CSS configuration
 ```
 
-You'll see the `./index.html` file should show a working app.
-You can access to the helpful debug console by clicking the Elm logo at the bottom right corner, which allows you to track the model state step by step (Elm's built-in feature!).
-In production, remove `--debug` flag to disable this debugging mode.
+### Tech Stack
 
-Use the [`elm-live`](https://github.com/wking-io/elm-live) dev-server to compile and reload the app automatically when you make changes (I specified this tool in `./package.json` too).
-
-```bash
-npx elm-live src/Main.elm --start-page=index.html -- --output=main.js --debug
-```
-
-### Misc. info
-
-- [Bulma](https://bulma.io) CSS is used for building UI blocks (loaded via CDN in `./index.html`)
-- For book database API, the app assumes the [`json-server`](https://github.com/typicode/json-server)'s interface for simplicity
-  - [A sample API](https://lean-hail-roast.glitch.me/) on [Glitch](https://glitch.com) returns a small size of sample data, some fields of which are flled with random meaningless values due to copyright issues. I do not assure these details about books, textbooks, etc. are authentic.
-  - The sample API needs some seconds to run because it relies on the Glitch's free tier
-  - You can use your own database and serve it with `json-server` locally
-  - For the DB specification, see `./src/BookDB.elm`
-- I use VSCode with the [Elm extension](https://github.com/elm-tooling/elm-language-client-vscode) for coding.
-- I tested this app on Safari and Brave Browser (but not rigorously).
+- **Language**: [Elm](https://elm-lang.org/) 0.19.1
+- **CSS Framework**: [Bulma](https://bulma.io) 1.0.1 (via SCSS)
+- **Dev Server**: [elm-watch](https://lydell.github.io/elm-watch/) with hot-reload
+- **Icons**: [Font Awesome](https://fontawesome.com/) 6 (CDN)
 
 ## Citations
 
-Please cite the following paper if you used this software.
+Please cite the following paper if you use this software.
 
 ```bibtex
 @INPROCEEDINGS{Yada2021-eo,
@@ -104,6 +115,6 @@ See also `./CITATION.cff` and `./CITATIONS.bib`.
 
 MIT (see `./LICENCE`)
 
-## Original Contributer
+## Author
 
 [Shuntaro Yada](https://shuntaroy.com)

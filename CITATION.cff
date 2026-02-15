@@ -5,8 +5,8 @@ authors:
     given-names: "Shuntaro"
     orcid: "https://orcid.org/0000-0002-6209-1054"
 title: "BookReach-UI Community Edition"
-version: 1.0.0
-date-released: 2022-07-31
+version: 2.0.0
+date-released: 2026-02-16
 url: "https://github.com/bookreach/bookreach-ui-ce"
 preferred-citation:
   type: conference-paper

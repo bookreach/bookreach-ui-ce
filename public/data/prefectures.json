@@ -1,0 +1,284 @@
+[
+  {
+    "key": "hokkaido",
+    "label": "北海道",
+    "primary_lib_id": "101274",
+    "primary_lib_name": "北海道立図書館"
+  },
+  {
+    "key": "aomori",
+    "label": "青森県",
+    "primary_lib_id": "100287",
+    "primary_lib_name": "青森県立図書館"
+  },
+  {
+    "key": "iwate",
+    "label": "岩手県",
+    "primary_lib_id": "101725",
+    "primary_lib_name": "岩手県立図書館"
+  },
+  {
+    "key": "miyagi",
+    "label": "宮城県",
+    "primary_lib_id": "102337",
+    "primary_lib_name": "宮城県図書館"
+  },
+  {
+    "key": "akita",
+    "label": "秋田県",
+    "primary_lib_id": "100237",
+    "primary_lib_name": "秋田県立図書館"
+  },
+  {
+    "key": "yamagata",
+    "label": "山形県",
+    "primary_lib_id": "104410",
+    "primary_lib_name": "山形県立図書館"
+  },
+  {
+    "key": "fukushima",
+    "label": "福島県",
+    "primary_lib_id": "100839",
+    "primary_lib_name": "福島県立図書館"
+  },
+  {
+    "key": "ibaraki",
+    "label": "茨城県",
+    "primary_lib_id": "101562",
+    "primary_lib_name": "茨城県立図書館"
+  },
+  {
+    "key": "tochigi",
+    "label": "栃木県",
+    "primary_lib_id": "103762",
+    "primary_lib_name": "栃木県立図書館"
+  },
+  {
+    "key": "gunma",
+    "label": "群馬県",
+    "primary_lib_id": "101030",
+    "primary_lib_name": "群馬県立図書館"
+  },
+  {
+    "key": "saitama",
+    "label": "埼玉県",
+    "primary_lib_id": "103400",
+    "primary_lib_name": "埼玉県立図書館"
+  },
+  {
+    "key": "chiba",
+    "label": "千葉県",
+    "primary_lib_id": "100490",
+    "primary_lib_name": "千葉県立図書館"
+  },
+  {
+    "key": "tokyo",
+    "label": "東京都",
+    "primary_lib_id": "104178",
+    "primary_lib_name": "東京都立図書館"
+  },
+  {
+    "key": "kanagawa",
+    "label": "神奈川県",
+    "primary_lib_id": "101938",
+    "primary_lib_name": "神奈川県立図書館"
+  },
+  {
+    "key": "niigata",
+    "label": "新潟県",
+    "primary_lib_id": "102783",
+    "primary_lib_name": "新潟県立図書館"
+  },
+  {
+    "key": "toyama",
+    "label": "富山県",
+    "primary_lib_id": "104336",
+    "primary_lib_name": "富山県立図書館"
+  },
+  {
+    "key": "ishikawa",
+    "label": "石川県",
+    "primary_lib_id": "101647",
+    "primary_lib_name": "石川県立図書館"
+  },
+  {
+    "key": "fukui",
+    "label": "福井県",
+    "primary_lib_id": "100620",
+    "primary_lib_name": "福井県立図書館"
+  },
+  {
+    "key": "yamanashi",
+    "label": "山梨県",
+    "primary_lib_id": "104518",
+    "primary_lib_name": "山梨県立図書館"
+  },
+  {
+    "key": "nagano",
+    "label": "長野県",
+    "primary_lib_id": "102519",
+    "primary_lib_name": "県立長野図書館"
+  },
+  {
+    "key": "gifu",
+    "label": "岐阜県",
+    "primary_lib_id": "100926",
+    "primary_lib_name": "岐阜県図書館"
+  },
+  {
+    "key": "shizuoka",
+    "label": "静岡県",
+    "primary_lib_id": "103680",
+    "primary_lib_name": "静岡県立中央図書館"
+  },
+  {
+    "key": "aichi",
+    "label": "愛知県",
+    "primary_lib_id": "100135",
+    "primary_lib_name": "愛知県図書館"
+  },
+  {
+    "key": "mie",
+    "label": "三重県",
+    "primary_lib_id": "102253",
+    "primary_lib_name": "三重県立図書館"
+  },
+  {
+    "key": "shiga",
+    "label": "滋賀県",
+    "primary_lib_id": "103532",
+    "primary_lib_name": "滋賀県立図書館"
+  },
+  {
+    "key": "kyoto",
+    "label": "京都府",
+    "primary_lib_id": "10039014",
+    "primary_lib_name": "府立図書館"
+  },
+  {
+    "key": "osaka",
+    "label": "大阪府",
+    "primary_lib_id": "103125",
+    "primary_lib_name": "大阪府立図書館"
+  },
+  {
+    "key": "hyogo",
+    "label": "兵庫県",
+    "primary_lib_id": "101443",
+    "primary_lib_name": "兵庫県立図書館"
+  },
+  {
+    "key": "nara",
+    "label": "奈良県",
+    "primary_lib_id": "102714",
+    "primary_lib_name": "奈良県立図書情報館"
+  },
+  {
+    "key": "wakayama",
+    "label": "和歌山県",
+    "primary_lib_id": "104394",
+    "primary_lib_name": "和歌山県立図書館"
+  },
+  {
+    "key": "tottori",
+    "label": "鳥取県",
+    "primary_lib_id": "104302",
+    "primary_lib_name": "鳥取県立図書館"
+  },
+  {
+    "key": "shimane",
+    "label": "島根県",
+    "primary_lib_id": "103588",
+    "primary_lib_name": "島根県立図書館"
+  },
+  {
+    "key": "okayama",
+    "label": "岡山県",
+    "primary_lib_id": "102923",
+    "primary_lib_name": "岡山県立図書館"
+  },
+  {
+    "key": "hiroshima",
+    "label": "広島県",
+    "primary_lib_id": "101123",
+    "primary_lib_name": "広島県立図書館"
+  },
+  {
+    "key": "yamaguchi",
+    "label": "山口県",
+    "primary_lib_id": "104457",
+    "primary_lib_name": "山口県立山口図書館"
+  },
+  {
+    "key": "tokushima",
+    "label": "徳島県",
+    "primary_lib_id": "103820",
+    "primary_lib_name": "徳島県立図書館"
+  },
+  {
+    "key": "kagawa",
+    "label": "香川県",
+    "primary_lib_id": "101750",
+    "primary_lib_name": "香川県立図書館"
+  },
+  {
+    "key": "ehime",
+    "label": "愛媛県",
+    "primary_lib_id": "100578",
+    "primary_lib_name": "愛媛県立図書館"
+  },
+  {
+    "key": "kochi",
+    "label": "高知県",
+    "primary_lib_id": "102054",
+    "primary_lib_name": "オーテピア高知図書館"
+  },
+  {
+    "key": "fukuoka",
+    "label": "福岡県",
+    "primary_lib_id": "100747",
+    "primary_lib_name": "福岡県立図書館"
+  },
+  {
+    "key": "saga",
+    "label": "佐賀県",
+    "primary_lib_id": "103231",
+    "primary_lib_name": "佐賀県立図書館"
+  },
+  {
+    "key": "nagasaki",
+    "label": "長崎県",
+    "primary_lib_id": "102663",
+    "primary_lib_name": "長崎県立・大村市立一体型図書館"
+  },
+  {
+    "key": "kumamoto",
+    "label": "熊本県",
+    "primary_lib_id": "102098",
+    "primary_lib_name": "熊本県立図書館"
+  },
+  {
+    "key": "oita",
+    "label": "大分県",
+    "primary_lib_id": "102857",
+    "primary_lib_name": "大分県立図書館"
+  },
+  {
+    "key": "miyazaki",
+    "label": "宮崎県",
+    "primary_lib_id": "102420",
+    "primary_lib_name": "宮崎県立図書館"
+  },
+  {
+    "key": "kagoshima",
+    "label": "鹿児島県",
+    "primary_lib_id": "101800",
+    "primary_lib_name": "鹿児島県立図書館"
+  },
+  {
+    "key": "okinawa",
+    "label": "沖縄県",
+    "primary_lib_id": "102979",
+    "primary_lib_name": "沖縄県立図書館"
+  }
+]
