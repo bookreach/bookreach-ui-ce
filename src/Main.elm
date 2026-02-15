@@ -1341,7 +1341,7 @@ viewBookCoverImg coverSize book =
             , style "text-align" "center"
             ]
             [ text (shortenTitle book.title) ]
-        , img [ src "/assets/blank_cover.png" ] []
+        , img [ src "assets/blank_cover.png" ] []
         ]
 
     else
@@ -1377,7 +1377,7 @@ viewBookBrowserTableRow coverSize filters selectedBookIds book =
                         extractCoverUrl book
 
                     else
-                        "/assets/blank_cover.png"
+                        "assets/blank_cover.png"
                 ]
                 []
             ]
@@ -1894,7 +1894,7 @@ viewTableOutputRow mapping book =
                         extractCoverUrl book
 
                     else
-                        "/assets/blank_cover.png"
+                        "assets/blank_cover.png"
                 ]
                 []
             ]
