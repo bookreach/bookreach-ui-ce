@@ -83,29 +83,38 @@ async function unitradPolling(uuid, version) {
     }
 }
 
+// Merge incremental polling results into the existing data object.
+// Mutates `data` in place — intentional for efficiency in the polling loop.
+// This matches the upstream implementation in bookreach-ui.
 function mergeBookData(data, newData) {
     if (data.version === newData.version) {
         return;
     }
     let books_diff = newData["books_diff"];
+    // Append newly discovered books
     Array.prototype.push.apply(data.books, books_diff.insert);
+    // Update top-level metadata (version, running, count, etc.) but not books arrays
     for (let key in data) {
         if (data.hasOwnProperty(key) && !key.startsWith('books')) {
             data[key] = newData[key];
         }
     }
+    // Patch individual book entries by index (_idx)
     for (let d of books_diff.update) {
         for (let key in d) {
             if (d.hasOwnProperty(key) && key !== '_idx') {
                 if (Array.isArray(d[key]) === true) {
+                    // Array fields (e.g. holdings): append new entries
                     Array.prototype.push.apply(data.books[d._idx][key], d[key]);
                 } else if (d[key] instanceof Object) {
+                    // Object fields: shallow-merge keys
                     for (let k in d[key]) {
                         if (d[key].hasOwnProperty(k)) {
                             data.books[d._idx][key][k] = d[key][k];
                         }
                     }
                 } else {
+                    // Scalar fields: overwrite
                     data.books[d._idx][key] = d[key];
                 }
             }
