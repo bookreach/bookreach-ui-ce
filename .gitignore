@@ -1,9 +1,11 @@
-### https://raw.github.com/github/gitignore/3df9bc0bd9cb0c3f5ea0904e88b9df5a378ccd59/Elm.gitignore
-
-# elm-package generated files
+### Elm
 elm-stuff
-# elm-repl generated files
 repl-temp-*
 
-data/
+### Build outputs
+public/main.js
+public/br-bulma.css
+
+### Node
 node_modules/
+package-lock.json

@@ -10,76 +10,86 @@
 
 学校図書館を活用できる場面で、専門性の違いから生まれる難しさをサポートします．
 
-![BookReach-UIの画面イメージ ](/assets/bookreach-ui.png)
-
 ## 動作確認
 
 [https://bookreach.github.io/bookreach-ui-ce/](https://bookreach.github.io/bookreach-ui-ce/) をブラウザで開いてください．
 
-### UI の操作方法
+### 使い方
 
-1. 校種を選ぶ（高校には非対応）
-2. 教科書を選ぶ
-3. 支援予定の授業で扱う単元を選ぶ
-4. 推薦図書の候補を選ぶ
-   1. 書影をクリックすると，詳細が開くので，中身を確認する
-   2. 使えそうな本であれば「選択」ボタンをクリックする
-5. ページ最下部にリストが自動作成される
-6. 必要に応じてリストを印刷したり，テキストファイルに書き出して Excel 等でさらに編集する
+1. 学校図書館がある都道府県を選ぶ
+2. 校種・学年・教科を選び，授業のテーマをフリーテキストで入力する
+3. NDL（国立国会図書館）の予測 API が関連する NDC（日本十進分類法）コードを提案する
+4. 「図書を検索」ボタンで都道府県内の図書館蔵書をカーリル Unitrad API で検索する
+5. NDC タブごとに結果を閲覧し，書誌詳細や所蔵館を確認する
+6. 使えそうな本を選び，CSV・TSV・印刷でリストを書き出す
 
-その他の機能など，詳細は下記論文をご覧ください．
+## アーキテクチャ
+
+バックエンドサーバは不要で，公開 API のみを利用するシングルページアプリケーションです．
+
+| API | 用途 |
+|-----|------|
+| [カーリル Unitrad](https://calil.jp/doc/api_ref.html) | NDC コードによる図書館蔵書検索 |
+| [NDL 予測 API](https://lab.ndl.go.jp/ndc/) | フリーテキストから NDC コードを予測 |
+| [openBD](https://openbd.jp/) | 書影画像 |
+
+アプリは3つのステージで構成されています：
+
+1. **都道府県選択** — 都道府県を選択（localStorage に保存）
+2. **NDC 選択** — 校種・教科・学年を選び，テーマを入力して予測された NDC コードを選択
+3. **エクスプローラ** — 図書の閲覧・詳細表示・フィルタ・選択・書き出し
 
 ## 開発
 
-> 本リポジトリは下記論文で提案されたシステムの参考実装です．
-> 機能やコード構成など，まだまだ改善点がありますので，プルリクエスト大歓迎です！
+必要な環境：
 
-開発を進めるためには，最低限下記のものをインストールする必要があります．
+- [Node.js](https://nodejs.org/en/)（v18 以上）
+- [Elm](https://elm-lang.org/)（0.19.1，npm 経由でインストール）
 
-- [Elm (0.19.1)](https://elm-lang.org/)
-- [`node.js`](https://nodejs.org/en/)
-
-> Elm は Web アプリケーション開発に適した素晴らしい関数型言語です．
-> 関数型と言ってもかなりわかりやすいシンプルな仕様になっていて，着実に自信を持って，それでいて楽しくコーディングできておすすめです．
-> ご存じない方は公式サイトのチュートリアルなどご覧いただけたらと思います．
->
-> BookReach UI のコードは Elm で閉じていて，npm パッケージ等には依存していません．
-> 最近の（移り変わりが激しい）web 開発ツールに関する知識は不要です．
-
-まず，プロジェクトに必要なツールをインストールします．
+### セットアップ
 
 ```bash
-npm install  # Elm関連の開発ツールをインストールします
-elm install  # 本Elmコードが使用するElmパッケージをインストールします
+npm install          # 依存パッケージをインストール（Elm, elm-watch, Sass 等）
+npm run build-bulma  # Bulma SCSS を CSS にコンパイル
 ```
 
-`./src` 以下の Elm コードを変更するたびに，以下を実行します．
+### コマンド一覧
 
-```shell
-elm make src/Main.elm --debug --output=main.js  # ElmコードをJSにコンパイルします
+| コマンド | 説明 |
+|---------|------|
+| `npm start` | ホットリロード付き開発サーバを起動（ポート 3000） |
+| `npm run build-bulma` | `br-bulma.scss` を `public/br-bulma.css` にコンパイル |
+| `npm test` | Elm テストを実行 |
+| `npm run format` | elm-format で Elm ソースコードを整形 |
+
+### プロジェクト構成
+
+```
+src/
+  Main.elm          # エントリポイント（3ステージ構成のエクスプローラ）
+  Api.elm           # 型定義・デコーダ・HTTP関数
+  NdcSelect.elm     # NDC選択コンポーネント（フリーテキスト→NDL予測）
+  BookFilter.elm    # クエリ・図書館フィルタ
+  School.elm        # 校種・教科・学年の定義
+  Utils.elm         # LocalStore・ヘルパー関数
+
+public/
+  index.html        # HTML シェル
+  custom.js         # Unitrad検索・ポーリング，マッピング，ポート
+  custom.css        # カスタムスタイル
+  data/
+    prefectures.json   # 47都道府県データ
+    ndc9-lv3.json      # NDC3次区分ラベル
+
+br-bulma.scss       # Bulma CSS 設定
 ```
 
-`./index.html` を開いていただくと，動作するアプリが表示されると思います．
-画面右下の Elm ロゴマークをクリックすると，便利な Elm デバッガーが立ち上がり，ステップごとの Elm モデル更新の様子がわかります（Elm の公式機能です！）．
-プロダクション環境にデプロイするときは，コンパイルオプションの `--debug` を外します．
+### 技術スタック
 
-[`elm-live`](https://github.com/wking-io/elm-live) という開発用 web サーバを使うと，上記のコンパイルとアプリのリロードをファイル変更に合わせて自動で実施してくれて便利です．
-npm パッケージに指定してあるので，上記手順を踏んでいればそのまま使えます．
-
-```bash
-npx elm-live src/Main.elm --start-page=index.html -- --output=main.js --debug
-```
-
-### Misc. info
-
-- [Bulma](https://bulma.io) CSS を UI ブロックに使用しています． `./index.html` で CDN から直接読み込んでいます (npm パッケージとして取り込んではいません)
-- 図書データベースの API は [`json-server`](https://github.com/typicode/json-server) の仕様に準拠していることを前提としています．
-  - [Glitch](https://glitch.com) 上の[サンプル API](https://lean-hail-roast.glitch.me/) は少数の図書データをサンプルとして返戻しますが， 著作権の問題でいくつかのフィールドについてランダム値を挿入しています．図書や教科書などに関するこれらデータの正しさは全く保証しないことをご承知おきください．
-  - サンプル API は Glitch の無料枠で運用しており，起動に数秒かかります
-  - ご自身で図書データベースを作成し，`json-server` で読み込んでローカル開発できます
-  - 図書データベースの仕様・要件は `./src/BookDB.elm` から読み取っていただけると思います
-- 個人的には，VSCode に [Elm extension](https://github.com/elm-tooling/elm-language-client-vscode) をインストールして開発しています
-- Safari と Brave ブラウザで動作確認していますが，厳密なテストは実施していません
+- **言語**: [Elm](https://elm-lang.org/) 0.19.1
+- **CSS フレームワーク**: [Bulma](https://bulma.io) 1.0.1（SCSS 経由）
+- **開発サーバ**: [elm-watch](https://lydell.github.io/elm-watch/)（ホットリロード対応）
+- **アイコン**: [Font Awesome](https://fontawesome.com/) 6（CDN）
 
 ## Citations
 

@@ -1,23 +1,57 @@
 port module Main exposing (..)
 
-import BookDB exposing (..)
-import BookFilter exposing (CollFilter(..), Msg(..), QueryMode(..), cfToString, isFiltered, listAllCF, listAllQM, qmToString, toggleSetMember)
+import Api exposing (..)
+import BookFilter
 import Browser
 import Csv.Encode as CsvEn
 import Dict exposing (Dict)
 import File.Download as Download
-import Html exposing (Html, a, button, div, figure, footer, h1, h2, header, i, img, input, label, li, nav, option, p, section, select, span, strong, table, tbody, td, text, th, thead, tr, ul)
-import Html.Attributes exposing (attribute, checked, class, classList, colspan, disabled, href, id, placeholder, rowspan, selected, src, style, target, type_, value)
+import Html exposing (..)
+import Html.Attributes exposing (..)
 import Html.Events exposing (onClick, onInput)
 import Html.Keyed as Keyed
-import Html.Lazy exposing (lazy3)
+import Html.Lazy exposing (lazy3, lazy4)
 import Http
-import List.Extra as ListEx
+import Json.Decode
+import NdcSelect
 import School exposing (School(..))
 import Set exposing (Set)
+import Utils exposing (LocalStore(..), onClickSP, toggleId, toggleSetMember)
 
 
-main : Program () Model Msg
+
+-- PORTS
+
+
+port saveToLocalStorage : { key : String, value : String } -> Cmd msg
+
+
+port removeFromLocalStorage : String -> Cmd msg
+
+
+port requestPrint : Bool -> Cmd msg
+
+
+port modalState : Bool -> Cmd msg
+
+
+port requestUnitradByNdc : ( String, String ) -> Cmd msg
+
+
+port receiveUnitradByNdc : (Json.Decode.Value -> msg) -> Sub msg
+
+
+port requestMapping : String -> Cmd msg
+
+
+port receiveMapping : (Json.Decode.Value -> msg) -> Sub msg
+
+
+
+-- MAIN
+
+
+main : Program Flags Model Msg
 main =
     Browser.element
         { init = init
@@ -28,24 +62,15 @@ main =
 
 
 
--- PORTS
-
-
-port requestPrint : Bool -> Cmd msg
-
-
-{-| Tell the modal's state (open or close) to switch 'is-clipped' attribute of <html> so that the background stops scrolling while a modal is opened.
--}
-port modalState : Bool -> Cmd msg
-
-
-
 -- SUBSCRIPTIONS
 
 
 subscriptions : Model -> Sub Msg
 subscriptions _ =
-    Sub.none
+    Sub.batch
+        [ receiveUnitradByNdc (GotBooksOfNdc9 << Json.Decode.decodeValue unitradResultDecoder)
+        , receiveMapping (GotMapping << Json.Decode.decodeValue unitradMappingDecoder)
+        ]
 
 
 
@@ -57,140 +82,173 @@ type BookModal
     | Opened Book
 
 
-type FetchStatus
-    = NotCached
-    | Fetching
-    | FetchErr
-    | Fetched
+type BookDisplayMode
+    = ThumbnailMode
+    | TableMode
 
 
-type LocalStore carrier
-    = NotLoaded
-    | Loading
-    | LoadErr
-    | Loaded carrier
+type CoverSize
+    = SmallCover
+    | LargeCover
 
 
-type alias TextBookStore =
-    LocalStore (List TextBook)
+coverSizeToString : CoverSize -> String
+coverSizeToString cs =
+    case cs of
+        SmallCover ->
+            "small"
+
+        LargeCover ->
+            "large"
 
 
-type alias TangenStore =
-    LocalStore (List Tangen)
+stringToCoverSize : String -> CoverSize
+stringToCoverSize s =
+    case s of
+        "small" ->
+            SmallCover
+
+        _ ->
+            LargeCover
 
 
-type alias ChapterStore =
-    LocalStore (List Chapter)
+type Stage
+    = PrefectureSelectingStage
+    | NdcSelectingStage
+    | ExploringStage
 
 
-type alias NdcLabelStore =
-    -- NDC (String) to Label/Text (String)
+type alias Ndc9LabelStore =
     LocalStore (Dict String String)
 
 
-type alias BookStore =
-    -- NDC (String) to Books with the NDC
-    -- BookStore FetchStatus (Dict String (List Book))
-    LocalStore (Dict String (List Book))
+type alias BookCache =
+    Dict String UnitradResult
 
 
 
 -- MODEL
 
 
+type alias Flags =
+    { prefecture : String
+    , coverSize : String
+    }
+
+
 type alias Model =
-    { selectedSchool : Maybe School
-    , selectedTextBook : Maybe TextBook
-    , selectedChapterIds : Set Int
-    , selectedNdcs : Set String
+    { stage : Stage
 
-    -- book browser state
-    , selectedBookIds : Set Int
-    , bookModal : BookModal
-    , selectedNdcTab : String
+    -- Prefecture
+    , prefectures : LocalStore (List Prefecture)
+    , selectedPrefecture : Maybe Prefecture
+
+    -- NdcSelect
+    , ndcSelect : NdcSelect.Model
+
+    -- NDC labels
+    , ndc9LabelStore : Ndc9LabelStore
+
+    -- Book browser
+    , bookCache : BookCache
+    , bookFetchErrCount : Int
+    , selectedBookIds : Set String
+    , selectedNdcTab : Maybe String
     , selectedPagination : Int
+    , bookDisplayMode : BookDisplayMode
+    , coverSize : CoverSize
+    , bookListOpened : Bool
+    , bookModal : BookModal
 
-    -- advSearch state
-    , advSearchModalOpened : Bool
-    , advSearchQuery : String
-    , advSearchNdc : String
-    , advSearchStatus : FetchStatus
+    -- Mapping
+    , mappingStatus : MappingStatus
 
-    -- filtering state
+    -- Extra NDC
+    , extraNdc9ModalOpened : Bool
+    , predNdc9Query : String
+    , predNdc9Store : LocalStore (List PredNdc9)
+    , extraNdc9Direct : String
+    , selectedExtraNdc9s : Set String
+
+    -- Filters
     , filters : BookFilter.State
-
-    -- database stores
-    , textBookStore : TextBookStore
-    , tangenStore : TangenStore
-    , chapterStore : ChapterStore
-    , ndcLabelStore : NdcLabelStore
-    , bookStore : BookStore
-    , kyCases : List KyCase
     }
 
 
 initModel : Model
 initModel =
-    { selectedSchool = Nothing
-    , selectedTextBook = Nothing
-    , selectedChapterIds = Set.empty
-    , selectedNdcs = Set.empty
+    { stage = PrefectureSelectingStage
+    , prefectures = Loading
+    , selectedPrefecture = Nothing
+    , ndcSelect = NdcSelect.initModel
+    , ndc9LabelStore = NotLoaded
+    , bookCache = Dict.empty
+    , bookFetchErrCount = 0
     , selectedBookIds = Set.empty
-    , bookModal = Closed
-    , selectedNdcTab = ""
+    , selectedNdcTab = Nothing
     , selectedPagination = 1
-    , advSearchModalOpened = False
-    , advSearchQuery = ""
-    , advSearchNdc = ""
-    , advSearchStatus = NotCached
+    , bookDisplayMode = ThumbnailMode
+    , coverSize = LargeCover
+    , bookListOpened = False
+    , bookModal = Closed
+    , mappingStatus = MappingNotRequested
+    , extraNdc9ModalOpened = False
+    , predNdc9Query = ""
+    , predNdc9Store = NotLoaded
+    , extraNdc9Direct = ""
+    , selectedExtraNdc9s = Set.empty
     , filters = BookFilter.default
-    , textBookStore = NotLoaded
-    , tangenStore = NotLoaded
-    , chapterStore = NotLoaded
-    , ndcLabelStore = NotLoaded
-    , bookStore = NotLoaded
-    , kyCases = []
     }
 
 
-init : () -> ( Model, Cmd Msg )
-init _ =
-    ( initModel, Cmd.none )
+init : Flags -> ( Model, Cmd Msg )
+init flags =
+    ( { initModel | coverSize = stringToCoverSize flags.coverSize }
+    , Cmd.batch
+        [ loadPrefectures (GotPrefectures flags.prefecture)
+        , loadNdc9Labels GotNdc9Labels
+        ]
+    )
 
 
 
 -- UPDATE
 
 
-type
-    Msg
-    -- Initial setup
-    = SelectSchool School
-    | GotTextBooks (Result Http.Error (List TextBook))
-    | GotTextBook (Result Http.Error TextBook)
-    | SelectTextBook TextBook
-    | GotTangens (Result Http.Error (List Tangen))
-    | SelectTangen Tangen
-    | SelectChapter Chapter
+type Msg
+    = -- Data loading
+      GotPrefectures String (Result Http.Error (List Prefecture))
+    | GotNdc9Labels (Result Http.Error (List Ndc9))
+      -- Prefecture selection
+    | SelectPrefecture Prefecture
+    | ChangePrefecture
+      -- NdcSelect
+    | NdcSelectMsg NdcSelect.Msg
+      -- Stage transition
     | FetchBooks
-    | GotNdcLabels (Result Http.Error (List NdcLabel))
-    | GotBooks (Result Http.Error (List Book))
-      -- Book Browser UI
+    | GotBooksOfNdc9 (Result Json.Decode.Error UnitradResult)
+    | GotMapping (Result Json.Decode.Error UnitradMapping)
+      -- Book browser
     | SelectNdcTab String
-    | SelectedPagination Int
+    | CloseNdc9Tab String
+    | SelectPagination Int
+    | ChangeBookDisplayMode BookDisplayMode
+    | SetCoverSize CoverSize
     | ToggleBookModal BookModal
-    | GotKyCases (Result Http.Error (List KyCase))
     | SelectBook Book
-      -- AdvSearch
-    | ToggleAdvSearchModal
-    | EditAdvSearchQuery String
-    | SelectAdvSearchNdc String
-    | RequestAdvSearch
-    | GotAdvSearchResult (Result Http.Error (List Book))
-    | GotAdvSearchResultInit (Maybe String) (Maybe String) (Result Http.Error (List Book))
-      -- Filter UI
+    | ToggleBookList
+      -- Extra NDC
+    | ToggleExtraNdc9Modal
+    | EditPredNdc9Query String
+    | PredictNdc9s
+    | GotPredNdc9s (Result Http.Error (List PredNdc9))
+    | EditExtraNdc9Direct String
+    | AddExtraNdc9Direct
+    | ToggleExtraNdc9 String
+    | FetchBooksOfExtraNdc9
+      -- Filters
     | BookFilterMsg BookFilter.Msg
-      -- Export data
+      -- Export
     | RequestTsv
     | RequestCsv
     | RequestPrint
@@ -199,438 +257,470 @@ type
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
-        -- Initial setup
-        SelectSchool school ->
-            ( { initModel | selectedSchool = Just school }
-            , getTextBooks GotTextBooks school
-            )
-
-        GotTextBooks result ->
+        -- Data loading
+        GotPrefectures savedKey result ->
             case result of
-                Ok textBooks ->
-                    ( { model | textBookStore = Loaded textBooks }, Cmd.none )
+                Ok prefectures ->
+                    let
+                        savedPref =
+                            if savedKey /= "" then
+                                List.filter (\p -> p.key == savedKey) prefectures
+                                    |> List.head
+
+                            else
+                                Nothing
+                    in
+                    case savedPref of
+                        Just pref ->
+                            ( { model
+                                | prefectures = Loaded prefectures
+                                , selectedPrefecture = Just pref
+                                , stage = NdcSelectingStage
+                              }
+                            , Cmd.none
+                            )
+
+                        Nothing ->
+                            ( { model | prefectures = Loaded prefectures }, Cmd.none )
 
                 Err _ ->
-                    ( { model | textBookStore = LoadErr }, Cmd.none )
+                    ( { model | prefectures = LoadErr }, Cmd.none )
 
-        GotTextBook result ->
+        GotNdc9Labels result ->
             case result of
-                Ok textBook ->
-                    ( { model | selectedTextBook = Just textBook }, Cmd.none )
+                Ok ndc9s ->
+                    let
+                        ndc9LabelDict =
+                            Dict.fromList <| List.map (\x -> ( x.symbol, x.label )) ndc9s
+                    in
+                    ( { model | ndc9LabelStore = Loaded ndc9LabelDict }, Cmd.none )
 
                 Err _ ->
-                    ( { model | selectedTextBook = Nothing }, Cmd.none )
+                    ( { model | ndc9LabelStore = LoadErr }, Cmd.none )
 
-        SelectTextBook textBook ->
-            ( { initModel
-                | selectedSchool = model.selectedSchool
-                , selectedTextBook = Just textBook
-                , textBookStore = model.textBookStore
+        -- Prefecture selection
+        SelectPrefecture pref ->
+            ( { model
+                | selectedPrefecture = Just pref
+                , stage = NdcSelectingStage
               }
-            , getTangens GotTangens textBook.id
+            , saveToLocalStorage { key = "prefecture", value = pref.key }
             )
 
-        GotTangens result ->
-            case result of
-                Ok tangens ->
+        ChangePrefecture ->
+            ( { initModel
+                | prefectures = model.prefectures
+                , ndc9LabelStore = model.ndc9LabelStore
+                , coverSize = model.coverSize
+              }
+            , removeFromLocalStorage "prefecture"
+            )
+
+        -- NdcSelect
+        NdcSelectMsg subMsg ->
+            case model.stage of
+                NdcSelectingStage ->
                     let
-                        newModel =
-                            { model
-                                | tangenStore = Loaded tangens
-                                , chapterStore = Loaded <| List.concat (List.map .chapters tangens)
-                            }
+                        ( newSubModel, cmds ) =
+                            NdcSelect.update subMsg model.ndcSelect
                     in
-                    ( newModel, Cmd.none )
+                    ( { model | ndcSelect = newSubModel }, Cmd.map NdcSelectMsg cmds )
 
-                Err _ ->
-                    ( { model | tangenStore = LoadErr }, Cmd.none )
+                _ ->
+                    ( model, Cmd.none )
 
-        SelectTangen tangen ->
-            let
-                tangenChapterIds =
-                    Set.fromList <| List.map .id tangen.chapters
-
-                newSelectedChapterIds =
-                    if isAllChapterSelected model.selectedChapterIds tangen.chapters then
-                        Set.diff model.selectedChapterIds tangenChapterIds
-
-                    else
-                        Set.union model.selectedChapterIds tangenChapterIds
-            in
-            ( { model | selectedChapterIds = newSelectedChapterIds }
-            , Cmd.none
-            )
-
-        SelectChapter chapter ->
-            ( { model | selectedChapterIds = toggleId chapter.id model.selectedChapterIds }
-            , Cmd.none
-            )
-
+        -- Stage transition
         FetchBooks ->
-            let
-                selectedNdcs =
-                    mapSelectedChaptersToNdcs model.chapterStore model.selectedChapterIds
-            in
-            ( { model | selectedNdcs = selectedNdcs, bookStore = Loading }
-            , Cmd.batch
-                [ getBooks GotBooks selectedNdcs
-                , getAllNdcLabels GotNdcLabels
-                ]
-            )
+            case model.selectedPrefecture of
+                Nothing ->
+                    ( model, Cmd.none )
 
-        GotNdcLabels result ->
-            case result of
-                Ok ndcLabels ->
+                Just pref ->
                     let
-                        ndcLabelDict =
-                            ndcLabels
-                                |> List.map (\nl -> ( nl.ndc, nl.label ))
+                        ndc9sToFetch =
+                            NdcSelect.toSelectedNdc9Symbols model.ndcSelect
+
+                        newBookCache =
+                            ndc9sToFetch
+                                |> List.map (\ndc -> ( ndc, urInit ndc ))
                                 |> Dict.fromList
-                    in
-                    ( { model | ndcLabelStore = Loaded ndcLabelDict }, Cmd.none )
 
-                Err _ ->
-                    ( { model | ndcLabelStore = LoadErr }, Cmd.none )
+                        cmdsInitSearch =
+                            initSearchBooks pref.key ndc9sToFetch
 
-        GotBooks result ->
-            case result of
-                Ok books ->
-                    let
-                        ndcBookDict =
-                            organiseBooksByNdc model.selectedNdcs books
+                        needsMapping =
+                            model.mappingStatus == MappingNotRequested
 
-                        defaultSelectedTab =
-                            sortedNdcCountList ndcBookDict
-                                |> List.head
-                                |> Maybe.map Tuple.first
-                                |> Maybe.withDefault ""
+                        mappingCmd =
+                            if needsMapping then
+                                requestMapping pref.key
+
+                            else
+                                Cmd.none
                     in
                     ( { model
-                        | bookStore = Loaded ndcBookDict
-                        , selectedNdcTab = defaultSelectedTab
+                        | stage = ExploringStage
+                        , bookCache = newBookCache
+                        , bookFetchErrCount = 0
+                        , selectedBookIds = Set.empty
+                        , selectedNdcTab = Nothing
+                        , selectedPagination = 1
+                        , bookListOpened = False
+                        , mappingStatus =
+                            if needsMapping then
+                                MappingRequested
+
+                            else
+                                model.mappingStatus
+                      }
+                    , Cmd.batch (mappingCmd :: cmdsInitSearch)
+                    )
+
+        GotBooksOfNdc9 result ->
+            case result of
+                Ok ur ->
+                    addUrToBookCache ur model
+
+                Err _ ->
+                    incrementBookFetchError model
+
+        GotMapping result ->
+            case result of
+                Ok um ->
+                    let
+                        normalised =
+                            case model.selectedPrefecture of
+                                Just pref ->
+                                    normaliseUM pref.primaryLibId um
+
+                                Nothing ->
+                                    um
+                    in
+                    ( { model | mappingStatus = MappingReceived normalised }, Cmd.none )
+
+                Err _ ->
+                    ( { model | mappingStatus = MappingError }, Cmd.none )
+
+        -- Book browser
+        SelectNdcTab ndc ->
+            ( { model | selectedNdcTab = Just ndc, selectedPagination = 1 }, Cmd.none )
+
+        CloseNdc9Tab ndc ->
+            case Dict.get ndc model.bookCache of
+                Nothing ->
+                    ( model, Cmd.none )
+
+                Just ur ->
+                    let
+                        newBookCache =
+                            Dict.remove ndc model.bookCache
+
+                        firstNdc9 =
+                            List.head <| Dict.keys newBookCache
+
+                        newSelectedBookIds =
+                            Set.diff model.selectedBookIds (Set.fromList <| List.map .id ur.books)
+                    in
+                    ( { model
+                        | selectedNdcTab = firstNdc9
+                        , selectedPagination = 1
+                        , selectedBookIds = newSelectedBookIds
+                        , bookCache = newBookCache
                       }
                     , Cmd.none
                     )
 
-                Err _ ->
-                    ( { model | bookStore = LoadErr }, Cmd.none )
-
-        -- Book Browser UI
-        SelectNdcTab ndc ->
-            ( { model | selectedNdcTab = ndc, selectedPagination = 1 }, Cmd.none )
-
-        SelectedPagination numPage ->
+        SelectPagination numPage ->
             ( { model | selectedPagination = numPage }, Cmd.none )
+
+        ChangeBookDisplayMode bdm ->
+            ( { model | bookDisplayMode = bdm, selectedPagination = 1 }, Cmd.none )
+
+        SetCoverSize newCoverSize ->
+            ( { model | coverSize = newCoverSize, selectedPagination = 1 }
+            , saveToLocalStorage { key = "explorerCoverSize", value = coverSizeToString newCoverSize }
+            )
 
         ToggleBookModal bookModal ->
             ( { model | bookModal = bookModal }
             , case bookModal of
-                Opened book ->
-                    if List.isEmpty book.caseIds then
-                        modalState True
-
-                    else
-                        Cmd.batch
-                            [ getKyCase GotKyCases book.caseIds
-                            , modalState True
-                            ]
+                Opened _ ->
+                    modalState True
 
                 Closed ->
                     modalState False
             )
 
-        GotKyCases result ->
-            case result of
-                Ok kyCases ->
-                    ( { model | kyCases = kyCases }, Cmd.none )
-
-                Err _ ->
-                    ( { model | kyCases = [] }, Cmd.none )
-
         SelectBook book ->
             case model.bookModal of
                 Opened _ ->
                     ( { model
-                        | selectedBookIds = toggleId book.id model.selectedBookIds
+                        | selectedBookIds = toggleId book model.selectedBookIds
                         , bookModal = Closed
                       }
                     , modalState False
                     )
 
                 Closed ->
-                    ( { model | selectedBookIds = toggleId book.id model.selectedBookIds }
+                    ( { model | selectedBookIds = toggleId book model.selectedBookIds }
                     , Cmd.none
                     )
 
-        ToggleAdvSearchModal ->
-            ( { model | advSearchModalOpened = not model.advSearchModalOpened }
-            , modalState (not model.advSearchModalOpened)
+        ToggleBookList ->
+            ( { model | bookListOpened = not model.bookListOpened }, Cmd.none )
+
+        -- Extra NDC
+        ToggleExtraNdc9Modal ->
+            ( { model
+                | extraNdc9ModalOpened = not model.extraNdc9ModalOpened
+                , predNdc9Query = ""
+                , predNdc9Store = NotLoaded
+                , selectedExtraNdc9s = Set.empty
+              }
+            , modalState (not model.extraNdc9ModalOpened)
             )
 
-        EditAdvSearchQuery query ->
-            ( { model | advSearchQuery = query }, Cmd.none )
+        EditPredNdc9Query query ->
+            ( { model | predNdc9Query = query }, Cmd.none )
 
-        SelectAdvSearchNdc ndc ->
-            ( { model | advSearchNdc = ndc }, Cmd.none )
-
-        RequestAdvSearch ->
-            ( { model | advSearchStatus = Fetching }
-            , case ( model.advSearchQuery, model.advSearchNdc ) of
-                ( _, "" ) ->
-                    getBooksByQuery GotAdvSearchResult model.advSearchQuery
-
-                ( "", _ ) ->
-                    getBooks GotAdvSearchResult (Set.fromList [ model.advSearchNdc ])
-
-                ( _, _ ) ->
-                    getBooksWithQuery GotAdvSearchResult model.advSearchNdc model.advSearchQuery
+        PredictNdc9s ->
+            ( { model | predNdc9Store = Loading }
+            , getPredNdc9s GotPredNdc9s model.predNdc9Query
             )
 
-        GotAdvSearchResult result ->
+        GotPredNdc9s result ->
             case result of
+                Ok predNdc9s ->
+                    ( { model | predNdc9Store = Loaded predNdc9s }, Cmd.none )
+
                 Err _ ->
-                    ( { model | advSearchStatus = FetchErr }, Cmd.none )
+                    ( { model | predNdc9Store = LoadErr }, Cmd.none )
 
-                Ok books ->
-                    case books of
-                        [] ->
-                            ( { model | advSearchStatus = FetchErr }, Cmd.none )
+        EditExtraNdc9Direct ndc9 ->
+            ( { model | extraNdc9Direct = ndc9 }, Cmd.none )
 
-                        _ ->
-                            let
-                                resultKey =
-                                    textAdvSearch model.ndcLabelStore model.advSearchQuery model.advSearchNdc
+        AddExtraNdc9Direct ->
+            ( { model
+                | selectedExtraNdc9s = Set.insert model.extraNdc9Direct model.selectedExtraNdc9s
+                , extraNdc9Direct = ""
+              }
+            , Cmd.none
+            )
 
-                                updatedBookStore =
-                                    case model.bookStore of
-                                        Loaded bookDict ->
-                                            Loaded (Dict.insert resultKey books bookDict)
+        ToggleExtraNdc9 ndc ->
+            ( { model | selectedExtraNdc9s = toggleSetMember ndc model.selectedExtraNdc9s }
+            , Cmd.none
+            )
 
-                                        _ ->
-                                            Loaded (Dict.fromList [ ( resultKey, books ) ])
-                            in
-                            ( { model
-                                | advSearchNdc = ""
-                                , advSearchQuery = ""
-                                , advSearchStatus = Fetched
-                                , advSearchModalOpened = False
-                                , bookStore = updatedBookStore
-                                , selectedNdcTab = resultKey
-                                , selectedPagination = 1
-                              }
-                            , modalState False
-                            )
+        FetchBooksOfExtraNdc9 ->
+            case model.selectedPrefecture of
+                Nothing ->
+                    ( model, Cmd.none )
 
-        GotAdvSearchResultInit maybeQuery maybeNdc result ->
-            case result of
-                Err _ ->
-                    ( { model | advSearchStatus = FetchErr }, Cmd.none )
+                Just pref ->
+                    let
+                        existingNdc9s =
+                            Set.fromList <| Dict.keys model.bookCache
 
-                Ok books ->
-                    case books of
-                        [] ->
-                            ( { model | advSearchStatus = FetchErr }, Cmd.none )
+                        extraNdc9sToFetch =
+                            Set.diff model.selectedExtraNdc9s existingNdc9s
+                                |> Set.map (\x -> String.left 3 x)
+                                |> Set.toList
 
-                        _ ->
-                            let
-                                resultKey =
-                                    textAdvSearch
-                                        model.ndcLabelStore
-                                        (Maybe.withDefault "" maybeQuery)
-                                        (Maybe.withDefault "" maybeNdc)
+                        newBookCache =
+                            Dict.union model.bookCache <|
+                                Dict.fromList <|
+                                    List.map (\ndc -> ( ndc, urInit ndc )) extraNdc9sToFetch
 
-                                updatedBookStore =
-                                    case model.bookStore of
-                                        Loaded bookDict ->
-                                            Loaded (Dict.insert resultKey books bookDict)
+                        cmdsInitSearch =
+                            initSearchBooks pref.key extraNdc9sToFetch
+                    in
+                    ( { model
+                        | extraNdc9ModalOpened = False
+                        , predNdc9Query = ""
+                        , predNdc9Store = NotLoaded
+                        , selectedExtraNdc9s = Set.empty
+                        , bookCache = newBookCache
+                      }
+                    , Cmd.batch (modalState False :: cmdsInitSearch)
+                    )
 
-                                        _ ->
-                                            Loaded (Dict.fromList [ ( resultKey, books ) ])
-                            in
-                            ( { model
-                                | bookStore = updatedBookStore
-                                , selectedNdcTab = resultKey
-                                , selectedPagination = 1
-                              }
-                            , Cmd.none
-                            )
+        -- Filters
+        BookFilterMsg subMsg ->
+            ( { model
+                | filters = BookFilter.update subMsg model.filters
+                , selectedPagination = 1
+              }
+            , Cmd.none
+            )
 
-        -- Filter UI
-        BookFilterMsg bookFilterMsg ->
-            let
-                ( newFilter, bookFilterLog ) =
-                    BookFilter.update bookFilterMsg model.filters
-            in
-            if bookFilterLog == "" then
-                ( { model | filters = newFilter }, Cmd.none )
-
-            else
-                ( { model | filters = newFilter, selectedPagination = 1 }, Cmd.none )
-
-        -- Export data
+        -- Export
         RequestTsv ->
-            ( model, Cmd.batch [ exportTsv model, Cmd.none ] )
+            ( model, exportTsv model )
 
         RequestCsv ->
-            ( model, Cmd.batch [ exportCsv model, Cmd.none ] )
+            ( model, exportCsv model )
 
         RequestPrint ->
-            ( model, Cmd.batch [ requestPrint True, Cmd.none ] )
+            ( model, requestPrint True )
 
 
 
--- Update Helpers
+-- UPDATE HELPERS
 
 
-toggleId : Int -> Set Int -> Set Int
-toggleId selectedId registeredIds =
-    toggleSetMember selectedId registeredIds
+initSearchBooks : String -> List String -> List (Cmd Msg)
+initSearchBooks key ndc9s =
+    List.map (\n -> requestUnitradByNdc ( key, n )) ndc9s
 
 
-isAllChapterSelected : Set Int -> List Chapter -> Bool
-isAllChapterSelected selectedChapterIds chapters =
-    List.all (\chp -> Set.member chp.id selectedChapterIds) chapters
+addUrToBookCache : UnitradResult -> Model -> ( Model, Cmd Msg )
+addUrToBookCache ur model =
+    let
+        newBookCache =
+            Dict.insert ur.query.ndc ur model.bookCache
+
+        defaultNdcTab =
+            case model.selectedNdcTab of
+                Just _ ->
+                    model.selectedNdcTab
+
+                Nothing ->
+                    Just ur.query.ndc
+    in
+    ( { model
+        | bookCache = newBookCache
+        , selectedNdcTab = defaultNdcTab
+      }
+    , Cmd.none
+    )
 
 
-mapSelectedChaptersToNdcs : ChapterStore -> Set Int -> Set String
-mapSelectedChaptersToNdcs chapterStore selectedChapterIds =
-    case chapterStore of
-        Loaded chapters ->
-            chapters
-                |> List.filter (\chp -> Set.member chp.id selectedChapterIds)
-                |> List.map (\chp -> chp.ndcs)
-                |> List.concat
-                |> Set.fromList
+incrementBookFetchError : Model -> ( Model, Cmd Msg )
+incrementBookFetchError model =
+    ( { model | bookFetchErrCount = model.bookFetchErrCount + 1 }, Cmd.none )
+
+
+getMapping : Model -> Mapping
+getMapping model =
+    case model.mappingStatus of
+        MappingReceived um ->
+            um.libraries
 
         _ ->
+            Dict.empty
+
+
+labelNdc9 : Ndc9LabelStore -> String -> String
+labelNdc9 ndc9LabelStore ndc9 =
+    case ndc9LabelStore of
+        Loaded ndc9LabelDict ->
+            Dict.get ndc9 ndc9LabelDict
+                |> Maybe.map (\x -> ndc9 ++ " " ++ x)
+                |> Maybe.withDefault ndc9
+
+        _ ->
+            ndc9
+
+
+sortBooks : List Book -> List Book
+sortBooks books =
+    List.reverse <| List.sortBy .pubdate books
+
+
+listSelectedBooks : BookCache -> Set String -> List Book
+listSelectedBooks bookCache selectedBookIds =
+    Dict.values bookCache
+        |> List.map .books
+        |> List.concat
+        |> List.filter (\b -> Set.member b.id selectedBookIds)
+        |> removeDuplicateBooks
+
+
+removeDuplicateBooks : List Book -> List Book
+removeDuplicateBooks books =
+    let
+        step book ( seen, acc ) =
+            if Set.member book.id seen then
+                ( seen, acc )
+
+            else
+                ( Set.insert book.id seen, book :: acc )
+    in
+    List.foldl step ( Set.empty, [] ) books
+        |> Tuple.second
+        |> List.reverse
+
+
+ndcSelectionCounts : Model -> Dict String Int
+ndcSelectionCounts { bookCache, selectedBookIds } =
+    Dict.map
+        (\_ ur ->
+            ur.books
+                |> List.filter (\book -> Set.member book.id selectedBookIds)
+                |> List.length
+        )
+        bookCache
+
+
+totalSelectionCount : Model -> Int
+totalSelectionCount model =
+    Set.size model.selectedBookIds
+
+
+selectedBookIdsOfNdc : Model -> Set String
+selectedBookIdsOfNdc { bookCache, selectedBookIds, selectedNdcTab } =
+    case selectedNdcTab of
+        Nothing ->
             Set.empty
 
-
-countBooksPerNdc : Dict String (List Book) -> Dict String Int
-countBooksPerNdc ndcBookDict =
-    Dict.map (\_ bookList -> List.length bookList) ndcBookDict
-
-
-sortedNdcCountList : Dict String (List Book) -> List ( String, Int )
-sortedNdcCountList ndcBookDict =
-    countBooksPerNdc ndcBookDict
-        |> Dict.toList
-        |> List.filter ((/=) 0 << Tuple.second)
-        |> List.sortBy Tuple.first
+        Just ndc9 ->
+            bookCache
+                |> Dict.get ndc9
+                |> Maybe.map .books
+                |> Maybe.withDefault []
+                |> List.map .id
+                |> Set.fromList
+                |> Set.intersect selectedBookIds
 
 
-mapSortedNdcCountList : BookStore -> List ( String, Int )
-mapSortedNdcCountList bookStore =
-    case bookStore of
-        Loaded ndcBookDict ->
-            let
-                locFilteredNdcBookDict =
-                    Dict.map (\_ books -> filterBooksByBookColl Both books) ndcBookDict
-            in
-            sortedNdcCountList locFilteredNdcBookDict
-
-        -- unreacheable
-        _ ->
-            []
+paginateBookList : Int -> Int -> List Book -> List Book
+paginateBookList pageSize currentPage bookList =
+    bookList
+        |> List.drop (pageSize * (currentPage - 1))
+        |> List.take pageSize
 
 
-organiseBooksByNdc : Set String -> List Book -> Dict String (List Book)
-organiseBooksByNdc selectedNdcs books =
-    let
-        selectedNdcList =
-            Set.toList selectedNdcs
-
-        perNdcBooks =
-            selectedNdcList
-                |> List.map
-                    (\ndc ->
-                        List.filter
-                            (\book -> book.ndc == ndc)
-                            books
-                    )
-                |> List.map
-                    (\bookList ->
-                        List.reverse <| List.sortBy .year bookList
-                    )
-    in
-    Dict.fromList <|
-        List.map2 Tuple.pair selectedNdcList perNdcBooks
+openBookModal : Book -> Html.Attribute Msg
+openBookModal book =
+    onClick <| ToggleBookModal (Opened book)
 
 
-lookupNdcLabel : String -> NdcLabelStore -> String
-lookupNdcLabel ndc ndcLabelStore =
-    case ndcLabelStore of
-        Loaded ndcLabelDict ->
-            Maybe.withDefault "" (Dict.get ndc ndcLabelDict)
 
-        _ ->
-            ""
-
-
-textAdvSearch : NdcLabelStore -> String -> String -> String
-textAdvSearch ndcLabelStore query ndc =
-    case ( query, ndc ) of
-        ( _, "" ) ->
-            "“" ++ query ++ "”"
-
-        ( "", _ ) ->
-            -- viewNdcTab will add NdcLabel for this case
-            ndc
-
-        ( _, _ ) ->
-            String.join " "
-                [ "“" ++ query ++ "”"
-                , "in"
-                , ndc
-                , lookupNdcLabel ndc ndcLabelStore
-                ]
-
-
-listSelectedBooks : Set Int -> BookStore -> List Book
-listSelectedBooks selectedBookIds bookStore =
-    case bookStore of
-        Loaded perNdcBookDict ->
-            perNdcBookDict
-                |> Dict.values
-                |> List.concat
-                |> List.map (\book -> ( book.id, book ))
-                |> Dict.fromList
-                |> Dict.filter (\k _ -> Set.member k selectedBookIds)
-                |> Dict.values
-
-        _ ->
-            []
+-- EXPORT HELPERS
 
 
 fileExportHeader : List String
 fileExportHeader =
     [ "タイトル"
-    , "副題"
     , "著者"
+    , "出版者"
     , "出版年"
-    , "出版社"
+    , "巻号"
     , "NDC"
-    , "NDC詳細"
-    , "対象学年"
-    , "ISBN13"
-    , "ページ数"
-    , "大きさ"
+    , "ISBN"
     ]
 
 
 exportBookToStrList : Book -> List String
 exportBookToStrList book =
     [ book.title
-    , book.subtitle
-    , String.join "・" book.authors
-    , String.fromInt book.year ++ "年"
-    , String.join "・" book.publishers
+    , book.author
+    , book.publisher
+    , book.pubdate
+    , book.volume
     , book.ndc
-    , book.ndc_full
-    , book.target
-    , book.isbn13
-    , book.pages
-    , book.size
+    , book.isbn
     ]
 
 
@@ -638,32 +728,29 @@ exportTsv : Model -> Cmd Msg
 exportTsv model =
     let
         tsvString =
-            listSelectedBooks model.selectedBookIds model.bookStore
-                |> List.map bookTsvRow
+            listSelectedBooks model.bookCache model.selectedBookIds
+                |> List.map (\book -> String.join "\t" <| exportBookToStrList book)
                 |> String.join "\n"
-
-        bookTsvRow book =
-            String.join "\t" <| exportBookToStrList book
 
         tsvHeader =
             String.join "\t" fileExportHeader
     in
     Download.string "bookreach-output.tsv" "text/tab-separated-values" <|
-        (tsvHeader ++ "\n" ++ tsvString)
+        ("\u{FEFF}" ++ tsvHeader ++ "\n" ++ tsvString)
 
 
 exportCsv : Model -> Cmd Msg
 exportCsv model =
     let
         csvString =
-            listSelectedBooks model.selectedBookIds model.bookStore
+            listSelectedBooks model.bookCache model.selectedBookIds
                 |> List.map exportBookToStrList
                 |> CsvEn.encode
-                    { encoder = CsvEn.withFieldNames (ListEx.zip fileExportHeader)
+                    { encoder = CsvEn.withFieldNames (List.map2 Tuple.pair fileExportHeader)
                     , fieldSeparator = ','
                     }
     in
-    Download.string "bookreach-output.csv" "text/csv" csvString
+    Download.string "bookreach-output.csv" "text/csv" ("\u{FEFF}" ++ csvString)
 
 
 
@@ -672,463 +759,459 @@ exportCsv model =
 
 view : Model -> Html Msg
 view model =
-    div []
-        [ viewHero
-
-        -- Initialisation UI
-        , section [ class "section" ]
-            [ div [ class "container" ]
-                [ div [ class "columns" ]
-                    [ viewSchoolSelector model.selectedSchool
-                    , viewTextBookSelector model.selectedTextBook model.textBookStore
-                    ]
-                , viewTangenChapterSelector model.selectedChapterIds model.tangenStore model.bookStore
+    div [] <|
+        case model.stage of
+            PrefectureSelectingStage ->
+                [ viewHero "BookReach Explorer" "図書館の地域を選択してください"
+                , viewPrefectureSelector model
                 ]
-            ]
 
-        -- Modal windows
-        , viewBookModal model
-        , viewAdvSearchModal model
-
-        -- Book Browser; Material list
-        , section [ class "section no-print" ]
-            [ div [ class "container" ] <|
-                [ h2 [ class "title" ] [ text "教材候補" ]
-                , viewBookFilterControl model.filters
+            NdcSelectingStage ->
+                [ viewHero "探索NDC選定" "授業について教えてください"
+                , viewPrefectureInfo model
+                , NdcSelect.view model.ndcSelect |> Html.map NdcSelectMsg
+                , viewFetchBooksButton model
                 ]
-                    -- NDC-based lists of books
-                    ++ viewBookBrowser model
-            ]
 
-        -- Table output
-        , viewTableOutput model.selectedBookIds model.bookStore
-        ]
+            ExploringStage ->
+                [ viewHero "教材探索" "教材候補を選んでください"
+                , NdcSelect.viewCompact model.ndcSelect |> Html.map NdcSelectMsg
+
+                -- Modals
+                , viewBookModal model
+                , viewExtraNdc9Modal model
+
+                -- Main content
+                , if model.bookListOpened then
+                    viewBooklist model
+
+                  else
+                    viewBookBrowser model
+                ]
 
 
-viewHero : Html Msg
-viewHero =
-    section [ class "hero is-info no-print" ]
+viewHero : String -> String -> Html Msg
+viewHero title_ desc =
+    section [ class "hero is-small no-print" ]
         [ div [ class "hero-body" ]
-            [ div [ class "container" ]
-                [ div [ class "columns" ]
-                    [ div [ class "column is-three-fifths is-offset-one-fifth" ]
-                        [ h1 [ class "title has-text-centered" ]
-                            [ text "単元探索" ]
-                        , p [ class "subtitle has-text-centered" ]
-                            [ text "単元に合わせて関連した蔵書を見つけます。" ]
-                        ]
-                    ]
+            [ div [ class "container has-text-centered" ]
+                [ h1 [ class "title" ] [ text title_ ]
+                , p [ class "subtitle" ] [ text desc ]
                 ]
             ]
         ]
 
 
-viewSchoolSelector : Maybe School -> Html Msg
-viewSchoolSelector selectedSchool =
-    div [ class "column is-4" ]
-        [ h2 [ class "title no-print" ] [ text "校種" ]
-        , p [ class "subtitle no-print" ] [ text "校種を選択してください" ]
-        , p [ class "buttons" ] <|
-            List.map (viewSchoolButton selectedSchool) School.all
-        ]
+
+-- PREFECTURE SELECTOR
 
 
-viewSchoolButton : Maybe School -> School -> Html Msg
-viewSchoolButton maybeSchool school =
-    let
-        schoolButtonClasses =
-            case maybeSchool of
-                Just selectedSchool ->
-                    [ ( "is-info", selectedSchool == school )
-                    , ( "no-print", selectedSchool /= school )
-                    ]
-
-                Nothing ->
-                    []
-    in
-    button
-        [ class "button"
-        , classList schoolButtonClasses
-        , onClick (SelectSchool school)
-
-        -- currently we don't support highschools
-        , disabled (school == High)
-        ]
-        [ text (School.toString school) ]
-
-
-viewTextBookSelector : Maybe TextBook -> TextBookStore -> Html Msg
-viewTextBookSelector selectedTextBook textBookStore =
-    div [ class "column" ]
-        [ h2 [ class "title no-print" ] [ text "教科書" ]
-        , p [ class "subtitle no-print" ] [ text "教科書を選択してください" ]
-        , p [ class "buttons" ] <|
-            case textBookStore of
-                LoadErr ->
-                    [ button [ class "button is-danger" ] [ text "サーバ接続エラー：ページを再読込してください" ] ]
-
+viewPrefectureSelector : Model -> Html Msg
+viewPrefectureSelector model =
+    section [ class "section" ]
+        [ div [ class "container" ]
+            [ case model.prefectures of
                 Loading ->
-                    [ button [ class "button is-loading" ] [ text "読み込み中" ] ]
+                    div [ class "has-text-centered" ]
+                        [ button [ class "button is-large is-loading is-text" ] [] ]
 
-                Loaded textBooks ->
-                    List.map (viewTextBookButton selectedTextBook) textBooks
+                LoadErr ->
+                    div [ class "notification is-danger" ]
+                        [ text "都道府県データの読み込みに失敗しました。ページを再読み込みしてください。" ]
+
+                Loaded prefectures ->
+                    viewPrefectureGrid prefectures
 
                 NotLoaded ->
-                    []
+                    div [] []
+            ]
         ]
 
 
-viewTextBookButton : Maybe TextBook -> TextBook -> Html Msg
-viewTextBookButton selectedTextBook textBook =
+viewPrefectureGrid : List Prefecture -> Html Msg
+viewPrefectureGrid prefectures =
     let
-        textBookClasses =
-            case selectedTextBook of
-                Just textBookSelected ->
-                    [ ( "is-info", textBookSelected.id == textBook.id )
-                    , ( "no-print", textBookSelected.id /= textBook.id )
-                    ]
+        indexed =
+            List.indexedMap Tuple.pair prefectures
 
-                Nothing ->
-                    []
+        regionGroup name start end =
+            let
+                regionPrefs =
+                    List.filter (\( i, _ ) -> i >= start && i <= end) indexed
+                        |> List.map Tuple.second
+            in
+            div [ class "mb-5" ]
+                [ h3 [ class "subtitle is-5 mb-2" ] [ text name ]
+                , div [ class "buttons" ] (List.map viewPrefectureButton regionPrefs)
+                ]
     in
+    div []
+        [ regionGroup "北海道・東北" 0 6
+        , regionGroup "関東" 7 13
+        , regionGroup "中部" 14 22
+        , regionGroup "近畿" 23 29
+        , regionGroup "中国・四国" 30 38
+        , regionGroup "九州・沖縄" 39 46
+        ]
+
+
+viewPrefectureButton : Prefecture -> Html Msg
+viewPrefectureButton pref =
     button
         [ class "button"
-        , classList textBookClasses
-        , onClick (SelectTextBook textBook)
+        , onClick (SelectPrefecture pref)
         ]
-        [ text textBook.title ]
+        [ text pref.label ]
 
 
-viewTangenChapterSelector : Set Int -> TangenStore -> BookStore -> Html Msg
-viewTangenChapterSelector selectedChapterIds tangenStore bookStore =
+viewPrefectureInfo : Model -> Html Msg
+viewPrefectureInfo model =
+    case model.selectedPrefecture of
+        Just pref ->
+            section [ class "section pb-0" ]
+                [ div [ class "container" ]
+                    [ nav [ class "level" ]
+                        [ div [ class "level-left" ]
+                            [ div [ class "level-item" ]
+                                [ span [ class "icon-text" ]
+                                    [ span [ class "icon" ] [ i [ class "fas fa-map-marker-alt" ] [] ]
+                                    , span [ class "is-size-5" ]
+                                        [ text <| pref.label ++ "（" ++ pref.primaryLibName ++ "）" ]
+                                    ]
+                                ]
+                            ]
+                        , div [ class "level-right" ]
+                            [ div [ class "level-item" ]
+                                [ button
+                                    [ class "button is-small is-outlined"
+                                    , onClick ChangePrefecture
+                                    ]
+                                    [ text "地域を変更" ]
+                                ]
+                            ]
+                        ]
+                    ]
+                ]
+
+        Nothing ->
+            div [] []
+
+
+
+-- NDC SELECTING STAGE
+
+
+viewFetchBooksButton : Model -> Html Msg
+viewFetchBooksButton model =
     div [ class "columns" ]
-        [ div [ class "column", class "is-full" ]
-            [ h2 [ class "title no-print" ] [ text "単元・章" ]
-            , p [ class "subtitle no-print" ] [ text "章を選択してください" ]
-            , viewTangenChapterTable selectedChapterIds tangenStore
-            , button
-                [ class "button is-success no-print"
-                , classList [ ( "is-loading", bookStore == Loading ) ]
-                , onClick FetchBooks
-                , disabled (Set.isEmpty selectedChapterIds)
-                ]
-                [ text "取得" ]
-            ]
-        ]
-
-
-viewTangenChapterTable : Set Int -> TangenStore -> Html Msg
-viewTangenChapterTable selectedChapterIds tangenStore =
-    table [ class "table is-fullwidth is-hoverable" ]
-        [ thead []
-            [ th [ class "has-text-centered" ] [ text "単元" ]
-            , th [ class "has-text-left" ] [ text "単元名" ]
-            , th [ class "has-text-left" ] [ text "章" ]
-            , th [ class "has-text-centered" ] [ text "" ]
-            ]
-        , tbody [] <|
-            case tangenStore of
-                NotLoaded ->
-                    []
-
-                Loading ->
-                    [ tr [] [ td [ colspan 4 ] [ text "読み込み中" ] ] ]
-
-                LoadErr ->
-                    [ tr [] [ td [ colspan 4 ] [ text "DBエラー" ] ] ]
-
-                Loaded tangens ->
-                    List.concat <| List.map (viewTangenChapterRow selectedChapterIds) tangens
-        ]
-
-
-viewTangenChapterRow : Set Int -> Tangen -> List (Html Msg)
-viewTangenChapterRow selectedChapterIds tangen =
-    viewTangenChapterRowFirst selectedChapterIds tangen
-        :: viewTangenChapterRowRest selectedChapterIds tangen
-
-
-viewTangenChapterRowFirst : Set Int -> Tangen -> Html Msg
-viewTangenChapterRowFirst selectedChapterIds tangen =
-    let
-        tangenClasses =
-            [ rowspan (List.length tangen.chapters)
-            , classList
-                [ ( "is-vcentered", True )
-                , ( "is-info", isAllChapterSelected selectedChapterIds tangen.chapters )
-                ]
-            , onClick (SelectTangen tangen)
-            ]
-
-        firstChapterRow =
-            case List.head tangen.chapters of
-                Nothing ->
-                    [ td [] [ text "" ], td [] [ text "" ] ]
-
-                Just chapter ->
-                    viewChapterRowData selectedChapterIds chapter
-    in
-    tr [] <|
-        [ th tangenClasses [ text (String.fromInt tangen.number) ]
-        , td tangenClasses [ text tangen.title ]
-        ]
-            ++ firstChapterRow
-
-
-viewTangenChapterRowRest : Set Int -> Tangen -> List (Html Msg)
-viewTangenChapterRowRest selectedChapterIds tangen =
-    List.drop 1 tangen.chapters
-        |> List.map (viewChapterRowData selectedChapterIds)
-        |> List.map (tr [])
-
-
-viewChapterRowData : Set Int -> Chapter -> List (Html Msg)
-viewChapterRowData selectedChapterIds chapter =
-    let
-        isChapterSelected =
-            Set.member chapter.id selectedChapterIds
-
-        textChpNum =
-            "第" ++ String.fromInt chapter.number ++ "章 " ++ chapter.title
-    in
-    [ td
-        [ classList [ ( "is-info", isChapterSelected ) ]
-        , onClick (SelectChapter chapter)
-        ]
-        [ text textChpNum ]
-    , td [ class "has-text-centered" ]
-        [ label [ class "checkbox" ]
-            [ input
-                [ type_ "checkbox"
-                , onClick (SelectChapter chapter)
-                , checked isChapterSelected
-                ]
-                []
-            ]
-        ]
-    ]
-
-
-viewBookFilterControl : BookFilter.State -> Html Msg
-viewBookFilterControl filters =
-    nav [ class "level" ]
-        [ div [ class "level-left" ]
-            [ div [ class "level-item" ]
-                [ div [ class "field is-grouped" ] <|
-                    List.map
-                        (viewBookTargetFilterButton filters.targetFilter)
-                        [ "小学生以下", "中学・高校", "大学・一般" ]
-                ]
-            , viewBookCollFilterButtons filters.collFilter
-            , div [ class "level-item" ] [ viewKyCaseFilterButton filters.kyCaseFilterOn ]
-            ]
-        , div [ class "level-right" ]
-            [ div [ class "level-item" ]
-                [ div [ class "field has-addons" ]
-                    [ p [ class "control" ] <| viewFilterQueryModeButtons filters.queryFilterMode
-                    , p [ class "control" ]
-                        [ p [ class "control" ]
-                            [ input
-                                [ class "input is-small"
-                                , type_ "text"
-                                , placeholder "書誌情報に …… を含む"
-                                , value filters.queryFilterStr
-                                , onInput (BookFilterMsg << EditQueryFilter)
-                                ]
-                                []
-                            ]
-                        ]
-                    , p [ class "control" ]
-                        [ button
-                            [ classList
-                                [ ( "button is-small", True )
-                                , ( "is-danger is-outlined", filters.queryFilterOn )
-                                ]
-                            , onClick (BookFilterMsg <| ToggleQueryFilter (not filters.queryFilterOn))
-                            ]
-                            [ text <|
-                                if filters.queryFilterOn then
-                                    "絞込解除"
-
-                                else
-                                    "絞り込む"
-                            ]
-                        ]
+        [ div [ class "column" ]
+            [ div [ class "container has-text-centered" ]
+                [ button
+                    [ class "button is-medium is-success no-print"
+                    , onClick FetchBooks
+                    , disabled <| not (NdcSelect.canProceed model.ndcSelect)
                     ]
+                    [ text "蔵書から教材候補を取得" ]
+                , p [ class "help" ]
+                    [ text "候補図書を取得後、蔵書探索するNDCを追加・削除できます" ]
                 ]
             ]
         ]
 
 
-targetTagColourHelper : Set String -> String -> Html.Attribute Msg
-targetTagColourHelper targetFilter bookTarget =
-    classList
-        [ ( "is-info", bookTarget == "小学生以下" )
-        , ( "is-warning", bookTarget == "中学・高校" )
-        , ( "is-dark", bookTarget == "大学・一般" && Set.member "大学・一般" targetFilter )
-        , ( "is-light", not (Set.member bookTarget targetFilter) )
-        ]
+
+-- EXPLORING STAGE: BOOK BROWSER
 
 
-viewBookTargetFilterButton : Set String -> String -> Html Msg
-viewBookTargetFilterButton targetFilter bookTarget =
-    button
-        [ class "button is-small level-item"
-        , targetTagColourHelper targetFilter bookTarget
-        , onClick (BookFilterMsg <| SetBookTargetFilter bookTarget)
-        ]
-        [ text bookTarget ]
-
-
-viewBookCollFilterButtons : CollFilter -> Html Msg
-viewBookCollFilterButtons collFilter =
-    div [ class "level-item" ]
-        [ div [ class "field has-addons" ]
-            [ div [ class "control" ] <|
-                List.map (viewBookCollFilterButton collFilter) listAllCF
-            ]
-        ]
-
-
-viewBookCollFilterButton : CollFilter -> CollFilter -> Html Msg
-viewBookCollFilterButton currentCollFilter collFilterToShow =
-    button
-        [ class "button is-small"
-        , classList [ ( "is-active", currentCollFilter == collFilterToShow ) ]
-        , onClick (BookFilterMsg <| SetBookCollFilter collFilterToShow)
-        ]
-        [ text <| cfToString collFilterToShow ]
-
-
-viewKyCaseFilterButton : Bool -> Html Msg
-viewKyCaseFilterButton kyCaseFilterOn =
-    button
-        [ class "button is-small level-item"
-        , classList [ ( "is-active", kyCaseFilterOn ) ]
-        , onClick (BookFilterMsg <| ToggleKyCaseFilter (not kyCaseFilterOn))
-        ]
-        [ span [] [ text "活用DB情報あり" ]
-        , span [ class "icon is-small" ] [ i [ class "fas fa-database" ] [] ]
-        ]
-
-
-viewFilterQueryModeButtons : QueryMode -> List (Html Msg)
-viewFilterQueryModeButtons queryMode =
-    let
-        viewFQMButton mode =
-            button
-                [ classList
-                    [ ( "button is-small is-light", True )
-                    , ( "is-active", queryMode == mode )
-                    ]
-                , onClick (BookFilterMsg <| SetQueryFilterMode mode)
-                ]
-                [ text <| qmToString mode ]
-    in
-    List.map viewFQMButton listAllQM
-
-
-viewBookBrowser : Model -> List (Html Msg)
+viewBookBrowser : Model -> Html Msg
 viewBookBrowser model =
     let
-        filteredBookDict : Dict String (List Book)
-        filteredBookDict =
-            case model.bookStore of
-                Loaded perNdcBookDict ->
-                    filterBooksForAllNdc model.filters perNdcBookDict
-
-                _ ->
-                    Dict.empty
-
-        filteredNdcCntDict : Dict String Int
-        filteredNdcCntDict =
-            countBooksPerNdc filteredBookDict
-
-        paginate bookList =
-            List.drop (12 * (model.selectedPagination - 1)) bookList
-                |> List.take 12
-
-        paginatedBooksOfNdc =
-            Dict.get model.selectedNdcTab filteredBookDict
-                |> Maybe.withDefault []
-                |> paginate
+        bookCnt =
+            totalSelectionCount model
     in
-    [ div [ class "tabs is-boxed" ]
-        [ ul [] <|
-            List.map
-                (viewNdcTab model filteredNdcCntDict)
-                (mapSortedNdcCountList model.bookStore)
-                ++ viewNewTab model.bookStore
-        ]
-    , viewPagination 12 model.selectedNdcTab filteredNdcCntDict model.selectedPagination
-    , Keyed.node "div"
-        [ class "columns is-multiline is-mobile has-background-white-bis"
-        , style "min-height" "40vh"
+    section [ class "section animate__animated animate__fadeIn" ]
+        [ div [ class "container" ]
+            [ nav [ class "level" ]
+                [ div [ class "level-left" ]
+                    [ div [ class "level-item" ]
+                        [ p [ class "title" ] [ text "教材候補ブラウザ" ] ]
+                    , div [ class "level-item has-text-centered" ]
+                        [ div []
+                            [ p [ class "heading" ] [ text "表示形式" ]
+                            , p [] [ viewBookDisplayModeButtons model ]
+                            ]
+                        ]
+                    , if model.bookDisplayMode == ThumbnailMode then
+                        div [ class "level-item has-text-centered" ]
+                            [ div []
+                                [ p [ class "heading" ] [ text "書影サイズ" ]
+                                , p [] [ viewCoverSizeToggle model.coverSize ]
+                                ]
+                            ]
 
-        -- , style "overflow-y" "auto"  -- is-vcentered
+                      else
+                        text ""
+                    ]
+                , div [ class "level-right" ]
+                    [ div [ class "level-item" ]
+                        [ p
+                            [ class "button is-middle is-warning"
+                            , onClick ToggleBookList
+                            ]
+                            [ span [ class "icon" ] [ i [ class "fas fa-lg fa-book" ] [] ]
+                            , span [] [ text "図書リスト" ]
+                            , if bookCnt > 0 then
+                                span [ class "ml-1" ] [ text <| "(" ++ String.fromInt bookCnt ++ "冊)" ]
+
+                              else
+                                text ""
+                            ]
+                        ]
+                    ]
+                ]
+            , BookFilter.view model.filters (getMapping model) |> Html.map BookFilterMsg
+            , viewBookBrowserTabbar model
+            , viewBookBrowserCore model
+            ]
         ]
-        (List.map (viewKeyedBook model.filters model.selectedBookIds) paginatedBooksOfNdc)
+
+
+viewBookDisplayModeButtons : Model -> Html Msg
+viewBookDisplayModeButtons model =
+    div [ class "level-item buttons are-small has-addons pb-4" ] <|
+        List.map
+            (viewBookDisplayModeButton model.bookDisplayMode)
+            [ ( TableMode, "リスト" ), ( ThumbnailMode, "書影" ) ]
+
+
+viewBookDisplayModeButton : BookDisplayMode -> ( BookDisplayMode, String ) -> Html Msg
+viewBookDisplayModeButton currentMode ( mode, label ) =
+    button
+        [ class <|
+            "button"
+                ++ (if currentMode == mode then
+                        " is-info is-active"
+
+                    else
+                        ""
+                   )
+        , onClick (ChangeBookDisplayMode mode)
+        ]
+        [ text label ]
+
+
+viewCoverSizeToggle : CoverSize -> Html Msg
+viewCoverSizeToggle currentSize =
+    div [ class "level-item buttons are-small has-addons pb-4" ]
+        [ button
+            [ classList
+                [ ( "button", True )
+                , ( "is-info is-active", currentSize == SmallCover )
+                ]
+            , onClick (SetCoverSize SmallCover)
+            ]
+            [ span [ class "icon is-small" ] [ i [ class "fas fa-th" ] [] ]
+            , span [] [ text "小" ]
+            ]
+        , button
+            [ classList
+                [ ( "button", True )
+                , ( "is-info is-active", currentSize == LargeCover )
+                ]
+            , onClick (SetCoverSize LargeCover)
+            ]
+            [ span [ class "icon is-small" ] [ i [ class "fas fa-th-large" ] [] ]
+            , span [] [ text "大" ]
+            ]
+        ]
+
+
+
+-- TABS
+
+
+viewBookBrowserTabbar : Model -> Html Msg
+viewBookBrowserTabbar model =
+    div [ class "tabs is-boxed" ]
+        [ ul [] <| List.append (viewNdc9Tabs model) viewNewTab ]
+
+
+viewNewTab : List (Html Msg)
+viewNewTab =
+    [ li [ onClick ToggleExtraNdc9Modal ]
+        [ a [ target "_self", class "icon is-large" ] [ i [ class "fas fa-lg fa-plus" ] [] ] ]
     ]
 
 
-viewNewTab : BookStore -> List (Html Msg)
-viewNewTab bookStore =
-    case bookStore of
-        Loaded _ ->
-            [ li [ onClick ToggleAdvSearchModal ]
-                [ a [ class "icon is-large" ] [ i [ class "fas fa-lg fa-plus" ] [] ] ]
+viewNdc9Tabs : Model -> List (Html Msg)
+viewNdc9Tabs model =
+    let
+        selectionCounts =
+            ndcSelectionCounts model
+    in
+    List.map (viewNdc9Tab model selectionCounts) (Dict.values model.bookCache)
+
+
+viewNdc9Tab : Model -> Dict String Int -> UnitradResult -> Html Msg
+viewNdc9Tab model selectionCounts ur =
+    let
+        selectedCount =
+            Dict.get ur.query.ndc selectionCounts
+                |> Maybe.withDefault 0
+
+        hasSelections =
+            selectedCount > 0
+
+        labelClasses =
+            [ ( "has-text-weight-bold", hasSelections )
+            , ( "has-text-info", hasSelections )
             ]
 
-        _ ->
-            []
+        textNdc9Label =
+            [ strong [ classList labelClasses ] [ text <| labelNdc9 model.ndc9LabelStore ur.query.ndc ]
+            , if hasSelections then
+                span [ class "tag is-rounded is-info is-light ml-2 mr-2" ] [ text <| String.fromInt selectedCount ]
 
-
-viewNdcTab : Model -> Dict String Int -> ( String, Int ) -> Html Msg
-viewNdcTab { filters, ndcLabelStore, selectedNdcTab } ndcCntDict ( ndc, cnt ) =
-    let
-        ndcLabel =
-            lookupNdcLabel ndc ndcLabelStore
-
-        textNdc =
-            [ strong [] [ text <| ndc ++ " " ++ ndcLabel ]
+              else
+                text ""
             , span [] [ text "(" ]
             ]
 
         textCnt =
-            [ span [] [ text (String.fromInt cnt) ]
-            , span [] [ text "冊)" ]
-            ]
+            if ur.count < 0 then
+                [ span [] [ text "取得中）" ] ]
+
+            else
+                [ span [] [ text <| String.fromInt ur.count ]
+                , span [] [ text "冊)" ]
+                ]
+
+        icon =
+            if ur.running then
+                [ button [ class "button is-loading is-small is-ghost" ] [] ]
+
+            else
+                [ span
+                    [ class "icon is-small"
+                    , id "close-ndc9"
+                    , onClickSP <| CloseNdc9Tab ur.query.ndc
+                    ]
+                    [ i [ class "fas fa-times" ] [] ]
+                ]
     in
     li
-        [ classList [ ( "is-active", selectedNdcTab == ndc ) ]
-        , onClick (SelectNdcTab ndc)
+        [ classList [ ( "is-active", model.selectedNdcTab == Just ur.query.ndc ) ]
+        , onClick (SelectNdcTab ur.query.ndc)
         ]
-        [ a [] <|
-            case Dict.get ndc ndcCntDict of
-                Just filteredCnt ->
-                    if isFiltered filters then
-                        textNdc
-                            ++ [ span
-                                    [ class "has-text-danger" ]
-                                    [ text (String.fromInt filteredCnt) ]
-                               , span [] [ text "/" ]
-                               ]
-                            ++ textCnt
+        [ a [ target "_self", classList [ ( "has-text-danger", ur.count == 0 ) ] ] <|
+            if BookFilter.isFiltered model.filters then
+                textNdc9Label
+                    ++ [ span
+                            [ class "has-text-danger" ]
+                            [ text <|
+                                (String.fromInt << List.length)
+                                    (BookFilter.apply model.filters ur.books)
+                            ]
+                       , span [] [ text "/" ]
+                       ]
+                    ++ textCnt
+                    ++ icon
 
-                    else
-                        textNdc ++ textCnt
+            else
+                textNdc9Label ++ textCnt ++ icon
+        ]
 
+
+
+-- BOOK BROWSER CORE
+
+
+viewBookBrowserCore : Model -> Html Msg
+viewBookBrowserCore model =
+    let
+        filteredBookList =
+            case model.selectedNdcTab of
                 Nothing ->
                     []
-        ]
+
+                Just ndc9 ->
+                    model.bookCache
+                        |> Dict.get ndc9
+                        |> Maybe.map .books
+                        |> Maybe.withDefault []
+                        |> BookFilter.apply model.filters
+                        |> sortBooks
+    in
+    case model.bookDisplayMode of
+        ThumbnailMode ->
+            div [ class "container" ] <|
+                viewBookBrowserThumbnail model filteredBookList
+
+        TableMode ->
+            div [ class "container" ] <|
+                viewBookBrowserTable model filteredBookList
 
 
-viewPagination : Int -> String -> Dict String Int -> Int -> Html Msg
-viewPagination booksPerPage selectedNdc ndcCntDict selectedPagination =
+viewBookBrowserThumbnail : Model -> List Book -> List (Html Msg)
+viewBookBrowserThumbnail model bookList =
     let
-        totalCnt =
-            Maybe.withDefault 0 <| Dict.get selectedNdc ndcCntDict
+        pageSize =
+            case model.coverSize of
+                SmallCover ->
+                    36
 
+                LargeCover ->
+                    12
+
+        pagedBooks =
+            paginateBookList pageSize model.selectedPagination bookList
+
+        selBookIds =
+            selectedBookIdsOfNdc model
+    in
+    [ viewPagination pageSize (List.length bookList) model.selectedPagination
+    , Keyed.node "div"
+        [ class "columns is-1 is-multiline is-mobile"
+        , style "min-height" "40vh"
+        ]
+        (List.map (viewKeyedBook model.coverSize model.filters selBookIds) pagedBooks)
+    ]
+
+
+viewBookBrowserTable : Model -> List Book -> List (Html Msg)
+viewBookBrowserTable model bookList =
+    let
+        pagedBooks =
+            paginateBookList 8 model.selectedPagination bookList
+
+        selBookIds =
+            selectedBookIdsOfNdc model
+    in
+    [ viewPagination 8 (List.length bookList) model.selectedPagination
+    , table [ class "table is-fullwidth is-hoverable", id "tableMode" ]
+        [ thead []
+            [ tr []
+                [ th [ style "width" "2.5%" ] []
+                , th [ style "width" "5%" ] []
+                , th [] [ text "タイトル" ]
+                , th [ style "width" "20%" ] [ text "著者" ]
+                , th [ style "width" "10%" ] [ text "出版年" ]
+                , th [ style "width" "15%" ] [ text "出版者" ]
+                ]
+            ]
+        , tbody []
+            (List.map (viewBookBrowserTableRow SmallCover model.filters selBookIds) pagedBooks)
+        ]
+    ]
+
+
+
+-- PAGINATION
+
+
+viewPagination : Int -> Int -> Int -> Html Msg
+viewPagination booksPerPage totalCnt selectedPagination =
+    let
         divided =
             totalCnt // booksPerPage
 
@@ -1146,69 +1229,31 @@ viewPagination booksPerPage selectedNdc ndcCntDict selectedPagination =
             li
                 [ class "pagination-link"
                 , classList [ ( "is-current", i == selectedPagination ) ]
-                , onClick (SelectedPagination i)
+                , onClick (SelectPagination i)
                 ]
                 [ text <| String.fromInt i ]
     in
     nav [ class "pagination is-centered is-small" ]
         [ button
             [ class "button pagination-previous"
-            , onClick (SelectedPagination <| max 1 (selectedPagination - 1))
+            , target "_self"
+            , onClick (SelectPagination <| Basics.max 1 (selectedPagination - 1))
             , disabled (selectedPagination == 1)
             ]
             [ text "←" ]
         , button
             [ class "button pagination-next"
-            , onClick (SelectedPagination <| min numPages (selectedPagination + 1))
+            , target "_self"
+            , onClick (SelectPagination <| Basics.min numPages (selectedPagination + 1))
             , disabled (selectedPagination == numPages || numPages == 0)
             ]
             [ text "→" ]
         , ul [ class "pagination-list" ] <|
-            if selectedNdc == "" then
-                []
-
-            else if numPages < 1 then
+            if numPages < 1 then
                 [ pLink 1 ]
 
             else if numPages <= 20 then
                 List.map pLink (List.range 1 numPages)
-
-            else if selectedPagination == 9 then
-                List.concat
-                    [ List.map pLink (List.range 1 8)
-                    , [ li [] [ span [ class "pagination-ellipsis" ] [ text "…" ] ]
-                      , pLink 9
-                      , pLink 10
-                      , pLink 11
-                      , li [] [ span [ class "pagination-ellipsis" ] [ text "…" ] ]
-                      ]
-                    , List.map pLink (List.range (numPages - 8) numPages)
-                    ]
-
-            else if selectedPagination > 8 && selectedPagination < (numPages - 9) then
-                -- FIXME: 8 and numPages - 8 duplicates at the middle when selectedPagination == 8 or numPages - 8
-                List.concat
-                    [ List.map pLink (List.range 1 8)
-                    , [ li [] [ span [ class "pagination-ellipsis" ] [ text "…" ] ]
-                      , pLink (selectedPagination - 1)
-                      , pLink selectedPagination
-                      , pLink (selectedPagination + 1)
-                      , li [] [ span [ class "pagination-ellipsis" ] [ text "…" ] ]
-                      ]
-                    , List.map pLink (List.range (numPages - 8) numPages)
-                    ]
-
-            else if selectedPagination == (numPages - 9) then
-                List.concat
-                    [ List.map pLink (List.range 1 8)
-                    , [ li [] [ span [ class "pagination-ellipsis" ] [ text "…" ] ]
-                      , pLink (numPages - 11)
-                      , pLink (numPages - 10)
-                      , pLink (numPages - 9)
-                      , li [] [ span [ class "pagination-ellipsis" ] [ text "…" ] ]
-                      ]
-                    , List.map pLink (List.range (numPages - 8) numPages)
-                    ]
 
             else
                 let
@@ -1228,212 +1273,179 @@ viewPagination booksPerPage selectedNdc ndcCntDict selectedPagination =
         ]
 
 
-filterBooksForAllNdc : BookFilter.State -> Dict String (List Book) -> Dict String (List Book)
-filterBooksForAllNdc filters perNdcBookDict =
-    Dict.map
-        (\_ bookList -> filterBooks filters bookList)
-        perNdcBookDict
+
+-- BOOK CARD (THUMBNAIL)
 
 
-filterBooks : BookFilter.State -> List Book -> List Book
-filterBooks filters bookList =
-    bookList
-        |> filterBooksByQuery filters.queryFilterOn filters.queryFilterMode filters.queryFilterStr
-        |> filterBooksByBookTarget filters.targetFilter
-        |> filterBooksByBookColl filters.collFilter
-        |> filterBooksWithKyCases filters.kyCaseFilterOn
+viewKeyedBook : CoverSize -> BookFilter.State -> Set String -> Book -> ( String, Html Msg )
+viewKeyedBook coverSize filters selectedBookIds book =
+    ( book.id, lazy4 viewBook coverSize filters selectedBookIds book )
 
 
-filterBooksWithKyCases : Bool -> List Book -> List Book
-filterBooksWithKyCases flag bookList =
-    if flag then
-        List.filter (\book -> not (List.isEmpty book.caseIds)) bookList
-
-    else
-        bookList
-
-
-filterBooksByQuery : Bool -> QueryMode -> String -> List Book -> List Book
-filterBooksByQuery flag mode queryInput books =
+viewBook : CoverSize -> BookFilter.State -> Set String -> Book -> Html Msg
+viewBook coverSize filters selectedBookIds book =
     let
-        queries =
-            String.split " " <| String.replace "\u{3000}" " " queryInput
+        columnClass =
+            case coverSize of
+                SmallCover ->
+                    "column is-1 has-text-left"
 
-        checkEachQueryOR book =
-            queries
-                |> List.any (\query -> String.contains query (bookContentForSearch book))
-
-        checkEachQueryAND book =
-            queries
-                |> List.all (\query -> String.contains query (bookContentForSearch book))
+                LargeCover ->
+                    "column is-2 has-text-left"
     in
-    case ( flag, mode ) of
-        ( True, And ) ->
-            List.filter checkEachQueryAND books
-
-        ( True, Or ) ->
-            List.filter checkEachQueryOR books
-
-        ( False, _ ) ->
-            books
-
-
-bookContentForSearch : Book -> String
-bookContentForSearch book =
-    String.join " "
-        [ book.title
-        , book.subtitle
-        , String.join " " book.authors
-        , String.join " " book.publishers
-        , String.join " " book.topics
-        , String.join " " book.notes
-        , book.toc
-        , book.libcom
-        ]
-
-
-filterBooksByBookTarget : Set String -> List Book -> List Book
-filterBooksByBookTarget targetFilter books =
-    let
-        setBookTargets : Book -> Set String
-        setBookTargets book =
-            Set.fromList (String.split "|" book.target)
-
-        matchBookTargetFilter : Book -> Set String
-        matchBookTargetFilter book =
-            Set.intersect targetFilter (setBookTargets book)
-    in
-    if Set.isEmpty targetFilter then
-        books
-
-    else
-        List.filter
-            (\book -> not (Set.isEmpty <| matchBookTargetFilter book))
-            books
-
-
-filterBooksByBookColl : CollFilter -> List Book -> List Book
-filterBooksByBookColl collFilter books =
-    case collFilter of
-        Own ->
-            List.filter .local books
-
-        ILL ->
-            List.filter (not << .local) books
-
-        Both ->
-            books
-
-
-viewKeyedBook : BookFilter.State -> Set Int -> Book -> ( String, Html Msg )
-viewKeyedBook filters selectedBookIds book =
-    ( String.fromInt book.id, lazy3 viewBook filters selectedBookIds book )
-
-
-viewBook : BookFilter.State -> Set Int -> Book -> Html Msg
-viewBook filters selectedBookIds book =
-    div
-        [ id "book"
-        , class "column is-2 has-text-left"
-        , classList [ ( "has-background-info", Set.member book.id selectedBookIds ) ]
-        ]
-        [ label [ class "checkbox" ]
-            [ input
-                [ type_ "checkbox"
-                , onClick (SelectBook book)
-                , checked (Set.member book.id selectedBookIds)
-                ]
-                []
-            , strong
-                [ classList
-                    [ ( "is-size-6", True )
-                    , ( "has-text-white", Set.member book.id selectedBookIds )
+    div [ class columnClass ]
+        [ div
+            [ id "book"
+            , class "container"
+            , style "padding" "0.5em"
+            , style "border-radius" "10px"
+            , classList [ ( "has-background-info", Set.member book.id selectedBookIds ) ]
+            ]
+            [ label [ class "checkbox" ]
+                [ input
+                    [ type_ "checkbox"
+                    , onClick (SelectBook book)
+                    , checked (Set.member book.id selectedBookIds)
                     ]
+                    []
+                , strong [] (highlightQueries filters <| shortenTitle book.title)
                 ]
-                (highlightQueries filters book.title)
-            , if List.isEmpty book.caseIds then
-                span [] []
-
-              else
-                span [ class "icon is-small" ] [ i [ class "fas fa-database" ] [] ]
-            , viewBookTargetTags filters.targetFilter book.target
+            , figure
+                [ class "image is-clickable"
+                , openBookModal book
+                ]
+                (viewBookCoverImg coverSize book)
             ]
-        , figure
-            [ class "image"
-            , onClick (ToggleBookModal (Opened book))
-            ]
-            (viewBookCoverImg book)
         ]
 
 
-viewBookCoverImg : Book -> List (Html Msg)
-viewBookCoverImg book =
-    if book.cover == "" then
+viewBookCoverImg : CoverSize -> Book -> List (Html Msg)
+viewBookCoverImg coverSize book =
+    if not (hasIsbn book) then
+        let
+            fontSize =
+                case coverSize of
+                    SmallCover ->
+                        "0.6em"
+
+                    LargeCover ->
+                        "1.5em"
+        in
         [ strong
             [ style "position" "absolute"
             , style "top" "10%"
             , style "left" "10%"
             , style "width" "80%"
-            , style "font-size" "1.5em"
+            , style "font-size" fontSize
             , style "color" "white"
             , style "text-align" "center"
             ]
-            [ text <|
-                if String.length book.title > 20 then
-                    String.left 19 book.title ++ "…"
-
-                else
-                    book.title
-            ]
+            [ text (shortenTitle book.title) ]
         , img [ src "/assets/blank_cover.png" ] []
         ]
 
     else
-        [ img [ src book.cover ] [] ]
+        [ img [ src (extractCoverUrl book) ] [] ]
 
 
-viewBookTargetTags : Set String -> String -> Html Msg
-viewBookTargetTags targetFilter target =
+
+-- BOOK TABLE ROW
+
+
+viewBookBrowserTableRow : CoverSize -> BookFilter.State -> Set String -> Book -> Html Msg
+viewBookBrowserTableRow coverSize filters selectedBookIds book =
     let
-        viewTargetTag t =
-            span
-                [ class "tag"
-                , targetTagColourHelper targetFilter t
-                ]
-                [ text t ]
-    in
-    if target == "" then
-        div [] []
+        attrOpenModal =
+            [ openBookModal book
+            , class "is-clickable"
+            ]
 
-    else
-        div [ class "tags" ] <|
-            List.map viewTargetTag (String.split "|" target)
+        ( thumbWidth, thumbHeight ) =
+            case coverSize of
+                SmallCover ->
+                    ( "30px", "40px" )
+
+                LargeCover ->
+                    ( "120px", "160px" )
+
+        bookThumbnail =
+            [ img
+                [ style "max-width" thumbWidth
+                , style "max-height" thumbHeight
+                , src <|
+                    if hasIsbn book then
+                        extractCoverUrl book
+
+                    else
+                        "/assets/blank_cover.png"
+                ]
+                []
+            ]
+
+        authorList =
+            String.split "\t" book.author
+    in
+    tr []
+        [ td [ class "has-text-centered" ]
+            [ label [ class "checkbox" ]
+                [ input
+                    [ type_ "checkbox"
+                    , onClick (SelectBook book)
+                    , checked (Set.member book.id selectedBookIds)
+                    ]
+                    []
+                ]
+            ]
+        , td attrOpenModal bookThumbnail
+        , td attrOpenModal
+            [ strong [] [ text book.title ]
+            , br [] []
+            , text book.volume
+            ]
+        , td attrOpenModal
+            [ text
+                (if List.length authorList > 1 then
+                    String.join "" (List.take 1 authorList) ++ " 他"
+
+                 else
+                    Maybe.withDefault "" (List.head authorList)
+                )
+            ]
+        , td attrOpenModal [ text book.pubdate ]
+        , td attrOpenModal [ text book.publisher ]
+        ]
+
+
+
+-- BOOK MODAL
 
 
 viewBookModal : Model -> Html Msg
-viewBookModal { filters, selectedBookIds, bookModal, kyCases } =
+viewBookModal model =
     let
-        highlighter : String -> List (Html Msg)
-        highlighter =
-            highlightQueries filters
+        mapping =
+            getMapping model
 
-        targetFilter =
-            filters.targetFilter
+        highlighter =
+            highlightQueries model.filters
 
         bookIsSelected =
-            Set.member book.id selectedBookIds
+            Set.member book.id model.selectedBookIds
 
         book =
-            case bookModal of
-                Opened book_ ->
-                    book_
+            case model.bookModal of
+                Opened b ->
+                    b
 
                 Closed ->
                     nullBook
+
+        bibInfoCol =
+            [ style "width" "6em", class "has-text-right" ]
     in
     div
         [ class "modal"
-        , classList [ ( "is-active", bookModal /= Closed ) ]
+        , classList [ ( "is-active", model.bookModal /= Closed ) ]
         ]
         [ div
             [ class "modal-background"
@@ -1443,7 +1455,7 @@ viewBookModal { filters, selectedBookIds, bookModal, kyCases } =
         , div [ class "modal-card" ]
             [ header [ class "modal-card-head" ]
                 [ p [ class "modal-card-title" ]
-                    [ strong [] <| highlighter book.title ]
+                    [ strong [] <| highlighter (shortenTitle book.title) ]
                 , button
                     [ attribute "aria-label" "close"
                     , class "delete"
@@ -1452,263 +1464,192 @@ viewBookModal { filters, selectedBookIds, bookModal, kyCases } =
                     []
                 ]
             , section [ class "modal-card-body" ]
-                [ div [ class "tile is-ancestor is-vertical" ]
-                    [ div [ class "tile" ]
-                        [ div [ class "tile is-vertical is-4 is-parent" ]
-                            [ div [ class "tile is-child" ]
-                                [ figure [ class "image" ] (viewBookCoverImg book)
-                                , p [ class "buttons" ]
-                                    [ a
-                                        [ class "button is-small is-warning"
-                                        , disabled (book.isbn10 == "")
-                                        , href ("https://www.amazon.co.jp/dp/" ++ String.replace "-" "" book.isbn10)
-                                        , target "_blank"
-                                        ]
-                                        [ span [ class "icon" ]
-                                            [ i [ class "fab fa-amazon" ] [] ]
-                                        , span [] [ text "Amazon" ]
-                                        ]
-                                    ]
-                                , strong [ class "is-6" ] [ text "キーワード" ]
-                                , p [ class "is-size-7" ] <|
-                                    highlighter (String.join "・" book.topics)
+                [ div [ class "columns is-mobile" ]
+                    [ div [ class "column is-4" ]
+                        [ figure [ class "image" ] (viewBookCoverImg LargeCover book)
+                        , p [ class "buttons" ] <|
+                            [ a
+                                [ class "button is-small is-warning"
+                                , disabled (not (hasIsbn book))
+                                , href ("https://www.amazon.co.jp/dp/" ++ book.id)
+                                , target "_blank"
+                                ]
+                                [ span [ class "icon" ]
+                                    [ i [ class "fab fa-amazon" ] [] ]
+                                , span [] [ text "Amazon" ]
+                                ]
+                            , a
+                                [ class "button is-small is-info"
+                                , disabled (not (hasIsbn book))
+                                , href ("https://books.google.co.jp/books?vid=ISBN" ++ book.id)
+                                , target "_blank"
+                                ]
+                                [ span [ class "icon" ]
+                                    [ i [ class "fab fa-google" ] [] ]
+                                , span [] [ text "Google" ]
                                 ]
                             ]
-                        , div [ class "tile is-vertical is-parent" ] <|
-                            [ div [ class "tile is-child" ]
-                                [ strong [ class "is-6" ] [ text "図書詳細" ]
-                                , table [ class "table is-size-7 is-narrow is-fullwidth" ]
-                                    [ tr []
-                                        [ th [] [ text "副題" ]
-                                        , td [] <| highlighter book.subtitle
-                                        ]
-                                    , tr []
-                                        [ th [] [ text "出版年" ]
-                                        , td [] <| highlighter (String.fromInt book.year ++ "年")
-                                        ]
-                                    , tr []
-                                        [ th [] [ text "著者" ]
-                                        , td [] <| highlighter (String.join "・" book.authors)
-                                        ]
-                                    , tr []
-                                        [ th [] [ text "出版社" ]
-                                        , td [] <| highlighter (String.join "・" book.publishers)
-                                        ]
-                                    , tr []
-                                        [ th [] [ text "総ページ数" ]
-                                        , td [] [ text book.pages ]
-                                        ]
-                                    , tr []
-                                        [ th [] [ text "NDC" ]
-                                        , td [] [ text book.ndc_full ]
-                                        ]
-                                    , tr []
-                                        [ th [] [ text "ISBN" ]
-                                        , td [] [ text book.isbn13 ]
-                                        ]
-                                    , tr []
-                                        [ th [] [ text "対象学年" ]
-                                        , td [] [ viewBookTargetTags targetFilter book.target ]
-                                        ]
-                                    ]
-                                ]
-                            , div [ class "tile is-child" ] <|
-                                strong [ class "is-6" ] [ text "内容紹介" ]
-                                    :: List.map
-                                        (\note ->
-                                            p [ class "is-small" ] <| highlighter note
-                                        )
-                                        book.notes
-                            , viewToC highlighter book
-                            , viewLibCom highlighter book
+                                ++ viewLibraryButtons mapping book
+                        ]
+                    , div [ class "column" ]
+                        [ strong [ class "is-6" ] [ text "図書詳細" ]
+                        , table [ class "table is-size-7 is-narrow is-fullwidth" ]
+                            [ tr [] [ th bibInfoCol [ text "タイトル" ], td [] <| highlighter book.title ]
+                            , tr [] [ th bibInfoCol [ text "著者" ], td [] <| highlighter book.author ]
+                            , tr [] [ th bibInfoCol [ text "巻号" ], td [] <| highlighter book.volume ]
+                            , tr [] [ th bibInfoCol [ text "出版年" ], td [] <| highlighter book.pubdate ]
+                            , tr [] [ th bibInfoCol [ text "出版者" ], td [] <| highlighter book.publisher ]
+                            , tr [] [ th bibInfoCol [ text "ISBN" ], td [] [ text book.isbn ] ]
+                            , tr [] [ th bibInfoCol [ text "NDC" ], td [] [ text book.ndc ] ]
                             ]
                         ]
-                    , viewKatsuyouDBdata kyCases book
                     ]
                 ]
             , footer [ class "modal-card-foot" ]
-                [ button
-                    [ classList
-                        [ ( "button", True )
-                        , ( "is-warning", bookIsSelected )
-                        , ( "is-success", not bookIsSelected )
-                        ]
-                    , onClick (SelectBook book)
-                    ]
-                    [ text
-                        (if bookIsSelected then
-                            "選択解除"
-
-                         else
-                            "選択"
-                        )
-                    ]
-                , button
-                    [ class "button"
-                    , onClick (ToggleBookModal Closed)
-                    ]
-                    [ text "教材候補に戻る" ]
-                ]
-            ]
-        ]
-
-
-viewToC : (String -> List (Html Msg)) -> Book -> Html Msg
-viewToC highlighter book =
-    if book.toc /= "" then
-        div [ class "tile is-child" ]
-            [ strong [ class "is-6" ] [ text "目次" ]
-            , ul [ class "is-small" ] <|
-                List.map (\t -> li [] (highlighter t)) (String.split "\n" book.toc)
-            ]
-
-    else
-        div [] []
-
-
-viewLibCom : (String -> List (Html Msg)) -> Book -> Html Msg
-viewLibCom highlighter book =
-    if book.libcom /= "" then
-        div [ class "tile is-child" ]
-            [ strong [ class "is-6" ] [ text "教員・司書のコメント" ]
-            , p [ class "is-small" ] <| highlighter book.libcom
-            ]
-
-    else
-        div [] []
-
-
-viewKatsuyouDBdata : List KyCase -> Book -> Html Msg
-viewKatsuyouDBdata kyCases book =
-    if List.isEmpty book.caseIds then
-        div [] []
-
-    else
-        div [ class "tile is-parent" ]
-            [ div [ class "tile is-child" ]
-                [ strong [ class "is-6" ] [ text "活用DB情報" ]
-                , table [ class "table is-size-7 is-narrow" ]
-                    [ thead [ class "has-text-left" ]
-                        [ tr []
-                            [ th [] []
-                            , th [] [ text "目的" ]
-                            , th [] [ text "校種" ]
-                            , th [] [ text "教科" ]
-                            , th [] [ text "対象学年" ]
-                            , th [] [ text "単元" ]
-                            , th [] [ text "実施日" ]
+                [ div [ class "buttons" ]
+                    [ button
+                        [ classList
+                            [ ( "button", True )
+                            , ( "is-warning", bookIsSelected )
+                            , ( "is-success", not bookIsSelected )
                             ]
+                        , onClick (SelectBook book)
                         ]
-                    , tbody [] (viewKyCases kyCases)
+                        [ text
+                            (if bookIsSelected then
+                                "選択解除"
+
+                             else
+                                "選択"
+                            )
+                        ]
+                    , button
+                        [ class "button"
+                        , onClick (ToggleBookModal Closed)
+                        ]
+                        [ text "教材候補に戻る" ]
                     ]
                 ]
             ]
-
-
-viewKyCases : List KyCase -> List (Html Msg)
-viewKyCases kyCases =
-    let
-        viewKyCase : KyCase -> Html Msg
-        viewKyCase kyCase =
-            tr []
-                [ td []
-                    [ a [ class "tag is-link", href kyCase.url, target "_blank" ]
-                        [ text kyCase.caseident ]
-                    ]
-                , td [] [ text <| String.left 30 kyCase.purpose ++ "…" ]
-                , td [] [ text kyCase.school ]
-                , td [] [ text kyCase.subject ]
-                , td [] [ text kyCase.target ]
-                , td [] [ text kyCase.tangen ]
-                , td [] [ text kyCase.date ]
-                ]
-    in
-    List.map viewKyCase kyCases
-
-
-viewAdvSearchModal : Model -> Html Msg
-viewAdvSearchModal { advSearchModalOpened, advSearchQuery, advSearchNdc, advSearchStatus, ndcLabelStore } =
-    div
-        [ class "modal"
-        , classList [ ( "is-active", advSearchModalOpened == True ) ]
         ]
-        [ div
-            [ class "modal-background"
-            , onClick ToggleAdvSearchModal
-            ]
-            []
+
+
+viewLibraryButtons : Mapping -> Book -> List (Html Msg)
+viewLibraryButtons mapping book =
+    List.map viewLibraryButton (extractLibNameLinkPairs mapping book)
+
+
+viewLibraryButton : ( String, String ) -> Html Msg
+viewLibraryButton ( libName, libLink ) =
+    a
+        [ class "button is-small", href libLink, target "_blank" ]
+        [ span [ class "icon" ]
+            [ i [ class "fas fa-university" ] [] ]
+        , span [] [ text libName ]
+        ]
+
+
+
+-- EXTRA NDC MODAL
+
+
+viewExtraNdc9Modal : Model -> Html Msg
+viewExtraNdc9Modal model =
+    let
+        existingNdc9s =
+            Set.fromList <| Dict.keys model.bookCache
+
+        disableFetchButton =
+            disabled <| Set.isEmpty model.selectedExtraNdc9s
+
+        disableAddButton =
+            disabled <|
+                Set.member model.extraNdc9Direct existingNdc9s
+                    || not (checkNdc9 model.extraNdc9Direct)
+    in
+    div [ class "modal", classList [ ( "is-active", model.extraNdc9ModalOpened ) ] ]
+        [ div [ class "modal-background", onClick ToggleExtraNdc9Modal ] []
         , div [ class "modal-card" ]
             [ header [ class "modal-card-head" ]
-                [ p [ class "modal-card-title" ]
-                    [ strong [] [ text "詳細検索結果をタブに追加" ] ]
-                , button
-                    [ attribute "aria-label" "close"
-                    , class "delete"
-                    , onClick ToggleAdvSearchModal
-                    ]
-                    []
+                [ p [ class "modal-card-title" ] [ strong [] [ text "NDCを追加" ] ]
+                , button [ attribute "aria-label" "close", class "delete", onClick ToggleExtraNdc9Modal ] []
                 ]
             , section [ class "modal-card-body" ]
-                [ div [ class "field is-horizontal" ]
-                    [ div [ class "field-label is-normal" ] [ label [ class "label" ] [ text "キーワード" ] ]
-                    , div [ class "field-body" ]
-                        [ div [ class "field" ]
+                [ div [ class "content" ]
+                    [ div [ class "field" ]
+                        [ label [ class "label" ] [ text "キーワードをNDCに変換" ]
+                        , div [ class "field has-addons" ]
                             [ p [ class "control is-expanded" ]
                                 [ input
                                     [ class "input"
                                     , type_ "text"
-                                    , placeholder "全文検索したいキーワードを入力"
-                                    , value advSearchQuery
-                                    , onInput EditAdvSearchQuery
+                                    , placeholder "例）地球温暖化 石油資源"
+                                    , value model.predNdc9Query
+                                    , onInput EditPredNdc9Query
                                     ]
                                     []
-                                ]
-                            ]
-                        ]
-                    ]
-                , div [ class "field is-horizontal" ]
-                    [ div [ class "field-label is-normal" ] [ label [ class "label" ] [ text "NDC" ] ]
-                    , div [ class "field-body" ]
-                        [ div [ class "field is-narrow" ]
-                            [ div [ class "control" ]
-                                [ div [ class "select is-fullwidth" ]
-                                    [ select [ onInput SelectAdvSearchNdc ] <|
-                                        option [ value "", selected (advSearchNdc == "") ] [ text "指定しない" ]
-                                            :: viewNdcLabelOptions advSearchNdc ndcLabelStore
+                                , p [ class "help" ]
+                                    [ a [ href "https://lab.ndl.go.jp/ndc/" ] [ text "NDC Predictor" ]
+                                    , text "を用いて最大3件の関連NDCに変換されます。"
                                     ]
                                 ]
+                            , p [ class "control" ]
+                                [ button
+                                    [ class "button"
+                                    , classList
+                                        [ ( "is-primary", model.predNdc9Store /= LoadErr )
+                                        , ( "is-danger", model.predNdc9Store == LoadErr )
+                                        , ( "is-loading", model.predNdc9Store == Loading )
+                                        ]
+                                    , onClick PredictNdc9s
+                                    , disabled <| model.predNdc9Query == ""
+                                    ]
+                                    [ text "変換" ]
+                                ]
                             ]
                         ]
+                    , viewPredNdc9Table model.predNdc9Store existingNdc9s model.selectedExtraNdc9s
+                    , hr [] []
+                    , div [ class "field" ]
+                        [ label [ class "label" ] [ text "NDCを直接入力" ]
+                        , div [ class "field has-addons" ]
+                            [ p [ class "control is-expanded" ]
+                                [ input
+                                    [ class "input"
+                                    , type_ "text"
+                                    , placeholder "NDC記号または件名"
+                                    , list "ndc9"
+                                    , value model.extraNdc9Direct
+                                    , onInput EditExtraNdc9Direct
+                                    ]
+                                    []
+                                , datalist [ id "ndc9" ] <|
+                                    viewNdc9Options model.ndc9LabelStore existingNdc9s
+                                ]
+                            , p [ class "control" ]
+                                [ button
+                                    [ class "button is-primary"
+                                    , onClick AddExtraNdc9Direct
+                                    , disableAddButton
+                                    ]
+                                    [ text "追加" ]
+                                ]
+                            ]
+                        ]
+                    , hr [] []
+                    , viewSelectedExtraNdc9Tags model.ndc9LabelStore model.selectedExtraNdc9s
                     ]
                 ]
             , footer [ class "modal-card-foot" ]
                 [ button
-                    [ class <|
-                        "button "
-                            ++ (case advSearchStatus of
-                                    Fetching ->
-                                        "is-success is-loading"
-
-                                    FetchErr ->
-                                        "is-danger"
-
-                                    _ ->
-                                        "is-success"
-                               )
-                    , onClick RequestAdvSearch
-                    , disabled (advSearchQuery == "" && advSearchNdc == "")
+                    [ class "button is-success"
+                    , onClick FetchBooksOfExtraNdc9
+                    , disableFetchButton
                     ]
-                    [ text <|
-                        case advSearchStatus of
-                            FetchErr ->
-                                "結果0件または通信失敗（リトライ）"
-
-                            _ ->
-                                "検索"
-                    ]
+                    [ text "選択したNDCの図書を追加検索" ]
                 , button
                     [ class "button"
-                    , onClick ToggleAdvSearchModal
+                    , onClick ToggleExtraNdc9Modal
                     ]
                     [ text "キャンセル" ]
                 ]
@@ -1716,28 +1657,283 @@ viewAdvSearchModal { advSearchModalOpened, advSearchQuery, advSearchNdc, advSear
         ]
 
 
-viewNdcLabelOptions : String -> NdcLabelStore -> List (Html Msg)
-viewNdcLabelOptions advSearchNdc ndcLabelStore =
-    case ndcLabelStore of
-        Loaded ndcLabelDict ->
-            ndcLabelDict
-                |> Dict.toList
-                |> List.map (viewNdcLabelOption advSearchNdc)
+viewPredNdc9Table : LocalStore (List PredNdc9) -> Set String -> Set String -> Html Msg
+viewPredNdc9Table predNdc9Store fetchedNdc9s selectedExtraNdc9s =
+    let
+        isAlreadyFetched ndc9 =
+            Set.member ndc9 fetchedNdc9s
+
+        roundedScoreString : Float -> String
+        roundedScoreString score =
+            if score * 1000 < 1 then
+                "0.001未満"
+
+            else if score * 1000 > 999 then
+                "0.999以上"
+
+            else
+                score
+                    |> String.fromFloat
+                    |> String.left 5
+
+        viewPredNdc9 : PredNdc9 -> Html Msg
+        viewPredNdc9 pred =
+            let
+                ndcLabel =
+                    pred.ndc ++ " (" ++ pred.label ++ ")"
+
+                isDisabled =
+                    isAlreadyFetched pred.ndc
+            in
+            tr
+                [ class <|
+                    if isDisabled then
+                        "has-background-light has-text-grey"
+
+                    else
+                        ""
+                ]
+                [ td [] [ text pred.ndc ]
+                , td [] [ text pred.label ]
+                , td [] [ text (roundedScoreString pred.score) ]
+                , td []
+                    [ input
+                        [ class "checkbox"
+                        , type_ "checkbox"
+                        , checked (Set.member ndcLabel selectedExtraNdc9s)
+                        , onClick (ToggleExtraNdc9 ndcLabel)
+                        , disabled isDisabled
+                        ]
+                        []
+                    ]
+                ]
+    in
+    table [ class "table is-fullwidth is-narrow is-hoverable" ] <|
+        case predNdc9Store of
+            Loaded predNdc9s ->
+                [ thead []
+                    [ tr []
+                        [ th [] [ text "NDC" ]
+                        , th [] [ text "ラベル" ]
+                        , th [] [ text "関連度スコア" ]
+                        , th [] [ text "追加" ]
+                        ]
+                    ]
+                , tbody [] (List.map viewPredNdc9 predNdc9s)
+                , tfoot []
+                    [ tr []
+                        [ th [ class "has-text-weight-light is-size-7", colspan 4 ]
+                            [ text "すでに教材候補を取得済みのNDCは灰色で表示されます。新しいフレーズを変換すれば、他のNDCも追加できます。" ]
+                        ]
+                    ]
+                ]
+
+            _ ->
+                []
+
+
+viewSelectedExtraNdc9Tags : Ndc9LabelStore -> Set String -> Html Msg
+viewSelectedExtraNdc9Tags store selectedExtraNdc9s =
+    let
+        viewNdc9Tag : String -> Html Msg
+        viewNdc9Tag symbol =
+            div [ class "control" ]
+                [ div [ class "tags has-addons" ]
+                    [ span [ class "tag is-info" ] [ text <| labelNdc9 store symbol ]
+                    , a [ class "tag is-delete", target "_self", onClick (ToggleExtraNdc9 symbol) ] []
+                    ]
+                ]
+    in
+    div [ class "field" ]
+        [ label [ class "label" ] [ text "追加するNDC" ]
+        , div [ class "field is-grouped is-grouped-multiline" ] <|
+            if Set.isEmpty selectedExtraNdc9s then
+                [ div [ class "notification pt-1 pb-2" ] [ text "NDCを追加するとここに表示されます。" ] ]
+
+            else
+                List.map viewNdc9Tag (Set.toList selectedExtraNdc9s)
+        ]
+
+
+viewNdc9Options : Ndc9LabelStore -> Set String -> List (Html Msg)
+viewNdc9Options ndc9Store fetchedNdc9s =
+    let
+        viewNdc9Option : ( String, String ) -> Html Msg
+        viewNdc9Option ( symbol, lbl ) =
+            option [ value symbol, disabled (Set.member symbol fetchedNdc9s) ]
+                [ text lbl ]
+    in
+    case ndc9Store of
+        Loaded ndc9s ->
+            List.map viewNdc9Option (Dict.toList ndc9s)
 
         _ ->
             []
 
 
-viewNdcLabelOption : String -> ( String, String ) -> Html Msg
-viewNdcLabelOption advSearchNdc ( ndc, label ) =
-    option [ value ndc, selected (advSearchNdc == ndc) ] [ text <| ndc ++ ": " ++ label ]
+
+-- BOOK LIST
+
+
+viewBooklist : Model -> Html Msg
+viewBooklist model =
+    let
+        mapping =
+            getMapping model
+
+        selectedBookCnt =
+            String.fromInt <| Set.size model.selectedBookIds
+    in
+    section [ class "section" ]
+        [ div [ class "container animate__animated animate__fadeIn" ]
+            [ nav [ class "level" ]
+                [ div [ class "level-left" ]
+                    [ h2 [ class "title" ]
+                        [ text "図書リスト"
+                        , span [ class "tag is-rounded" ]
+                            [ text <| selectedBookCnt ++ "冊" ]
+                        ]
+                    ]
+                , viewBooklistExportButtons model
+                , div [ class "level-right" ]
+                    [ p
+                        [ class "button is-middle is-primary no-print"
+                        , onClick ToggleBookList
+                        ]
+                        [ span [ class "icon" ]
+                            [ i [ class "fas fa-columns" ] [] ]
+                        , span [] [ text "教材候補ブラウザに戻る" ]
+                        ]
+                    ]
+                ]
+            , viewTableOutput mapping model
+            ]
+        ]
+
+
+viewBooklistExportButtons : Model -> Html Msg
+viewBooklistExportButtons model =
+    let
+        noBooks =
+            Set.isEmpty model.selectedBookIds
+    in
+    div [ class "level-item no-print" ]
+        [ div [ class "buttons" ]
+            [ button
+                [ class "button"
+                , onClick RequestPrint
+                , disabled noBooks
+                ]
+                [ span [ class "icon" ]
+                    [ i [ class "fas fa-print" ] [] ]
+                , span [] [ text "印刷" ]
+                ]
+            , button
+                [ class "button"
+                , onClick RequestCsv
+                , disabled noBooks
+                ]
+                [ span [ class "icon" ]
+                    [ i [ class "fas fa-file-csv" ] [] ]
+                , span [] [ text "CSV出力" ]
+                ]
+            , button
+                [ class "button"
+                , onClick RequestTsv
+                , disabled noBooks
+                ]
+                [ span [ class "icon" ]
+                    [ i [ class "fas fa-file-alt" ] [] ]
+                , span [] [ text "TSV出力" ]
+                ]
+            ]
+        ]
+
+
+viewTableOutput : Mapping -> Model -> Html Msg
+viewTableOutput mapping model =
+    div [ class "columns" ]
+        [ div [ class "column is-full" ]
+            [ table [ class "table is-fullwidth is-hoverable" ]
+                [ thead [ class "has-text-left" ]
+                    [ tr []
+                        [ th [] []
+                        , th [ style "width" "8%" ] []
+                        , th [] [ text "タイトル" ]
+                        , th [] [ text "著者" ]
+                        , th [] [ text "出版年" ]
+                        , th [] [ text "出版者" ]
+                        , th [] [ text "NDC" ]
+                        , th [ style "width" "20%" ] [ text "所蔵" ]
+                        ]
+                    ]
+                , tbody [] (viewTableOutputRows mapping model.bookCache model.selectedBookIds)
+                ]
+            ]
+        ]
+
+
+viewTableOutputRows : Mapping -> BookCache -> Set String -> List (Html Msg)
+viewTableOutputRows mapping bookCache selectedBookIds =
+    listSelectedBooks bookCache selectedBookIds
+        |> List.map (viewTableOutputRow mapping)
+
+
+viewTableOutputRow : Mapping -> Book -> Html Msg
+viewTableOutputRow mapping book =
+    let
+        attrOpenModal =
+            openBookModal book
+
+        bookThumbnail =
+            [ img
+                [ style "width" "60px"
+                , style "height" "80px"
+                , src <|
+                    if hasIsbn book then
+                        extractCoverUrl book
+
+                    else
+                        "/assets/blank_cover.png"
+                ]
+                []
+            ]
+    in
+    tr [ class "is-clickable" ]
+        [ td [ class "has-text-centered" ]
+            [ label [ class "checkbox" ]
+                [ input
+                    [ type_ "checkbox"
+                    , onClick (SelectBook book)
+                    , checked True
+                    ]
+                    []
+                ]
+            ]
+        , td [ attrOpenModal ] bookThumbnail
+        , td [ attrOpenModal ]
+            [ strong [] [ text book.title ]
+            , br [] []
+            , text book.volume
+            ]
+        , td [ attrOpenModal ] <| List.intersperse (br [] []) (List.map text <| String.split "\t" book.author)
+        , td [ attrOpenModal ] [ text book.pubdate ]
+        , td [ attrOpenModal ] [ text book.publisher ]
+        , td [ attrOpenModal ] [ text book.ndc ]
+        , td [ attrOpenModal ]
+            [ div [ class "buttons" ] (viewLibraryButtons mapping book) ]
+        ]
+
+
+
+-- QUERY HIGHLIGHTING
 
 
 highlightQueries : BookFilter.State -> String -> List (Html Msg)
-highlightQueries { queryFilterOn, queryFilterStr } txt =
+highlightQueries { queryOn, query } txt =
     let
         queries =
-            String.split " " <| String.replace "\u{3000}" " " queryFilterStr
+            String.split " " <| String.replace "\u{3000}" " " query
 
         viewHighlightToken : String -> Html Msg
         viewHighlightToken token =
@@ -1749,7 +1945,7 @@ highlightQueries { queryFilterOn, queryFilterStr } txt =
             else
                 span [] [ text token ]
     in
-    if queryFilterOn then
+    if queryOn then
         highlightQueriesHelper queries [ txt ]
             |> List.map viewHighlightToken
 
@@ -1781,110 +1977,3 @@ highlightQuery query hlTexts =
     hlTexts
         |> List.map markHlTokens
         |> List.concat
-
-
-viewTableOutput : Set Int -> BookStore -> Html Msg
-viewTableOutput selectedBookIds bookStore =
-    let
-        noBooks =
-            Set.isEmpty selectedBookIds
-    in
-    section [ class "section" ]
-        [ div [ class "container" ]
-            [ h2 [ class "title no-print" ]
-                [ text "図書リスト"
-                , span [ class "tag is-rounded" ]
-                    [ text <| (String.fromInt << Set.size) selectedBookIds ++ "冊" ]
-                ]
-            , div [ class "columns" ]
-                [ div [ class "column is-full" ]
-                    [ table [ class "table is-fullwidth is-hoverable" ]
-                        [ thead [ class "has-text-left" ]
-                            [ tr []
-                                [ th [] []
-                                , th [] []
-                                , th [] [ text "タイトル" ]
-                                , th [] [ text "著者" ]
-                                , th [] [ text "出版年" ]
-                                , th [] [ text "出版社" ]
-                                , th [] [ text "NDC" ]
-                                ]
-                            ]
-                        , tbody [] (viewTableOutputRows selectedBookIds bookStore)
-                        ]
-                    , div [ class "buttons no-print" ]
-                        [ button
-                            [ class "button is-info"
-                            , onClick RequestPrint
-                            , disabled noBooks
-                            ]
-                            [ text "印刷" ]
-                        , button
-                            [ class "button is-warning"
-                            , onClick RequestCsv
-                            , disabled noBooks
-                            ]
-                            [ text "CSVファイルで出力" ]
-                        , button
-                            [ class "button is-warning"
-                            , onClick RequestTsv
-                            , disabled noBooks
-                            ]
-                            [ text "タブ区切りファイルで出力" ]
-                        , p [ class "help" ]
-                            [ text "ファイル出力はUTF-8エンコーディングされます（参考："
-                            , a [ href "https://www.ipentec.com/document/office-excel-open-utf-8-csv-file", target "_blank" ]
-                                [ text "Excel での開き方" ]
-                            , text "）"
-                            ]
-                        ]
-                    ]
-                ]
-            ]
-        ]
-
-
-viewTableOutputRows : Set Int -> BookStore -> List (Html Msg)
-viewTableOutputRows selectedBookIds bookStore =
-    listSelectedBooks selectedBookIds bookStore
-        |> List.map viewTableOutputRow
-
-
-viewTableOutputRow : Book -> Html Msg
-viewTableOutputRow book =
-    let
-        openModal =
-            onClick (ToggleBookModal (Opened book))
-
-        bookThumbnail =
-            [ img
-                [ style "width" "60px"
-                , style "height" "80px"
-                , src <|
-                    if book.cover == "" then
-                        "/assets/blank_cover.png"
-
-                    else
-                        book.cover
-                ]
-                []
-            ]
-    in
-    tr []
-        [ td [ class "has-text-centered" ]
-            [ label [ class "checkbox" ]
-                [ input
-                    [ type_ "checkbox"
-                    , onClick (SelectBook book)
-                    , checked True
-                    ]
-                    []
-                ]
-            ]
-        , td [ openModal ] bookThumbnail
-        , td [ openModal ] [ strong [] [ text book.title ] ]
-        , td [ openModal ] [ text (String.join "・" book.authors) ]
-        , td [ openModal ] [ text (String.fromInt book.year ++ "年") ]
-        , td [ openModal ] [ text (String.join "・" book.publishers) ]
-        , td [ openModal ] [ text book.ndc ]
-        ]

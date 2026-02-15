@@ -1,0 +1,83 @@
+html {
+  scroll-behavior: smooth;
+}
+
+.modal {
+  animation: fadeIn;
+  animation-duration: 0.2s;
+}
+
+/* always show a scroll bar
+ * the element must set a fixed height (max-height)
+*/
+.vertical-scroll {
+  overflow-y: scroll;
+}
+
+/* force showing a scroll bar on macOS */
+.vertical-scroll::-webkit-scrollbar {
+  -webkit-appearance: none;
+  width: 7px;
+}
+
+.vertical-scroll::-webkit-scrollbar-thumb {
+  border-radius: 4px;
+  background-color: rgba(0, 0, 0, .5);
+  box-shadow: 0 0 1px rgba(255, 255, 255, .5);
+}
+
+#close-ndc9:hover {
+  color: red;
+}
+
+#book:hover {
+  background-color: var(--bulma-info-soft);
+}
+
+#book input[type="checkbox"] {
+  margin-right: 0.2rem;
+}
+
+#book figure {
+  margin-top: 0.5rem;
+}
+
+#book>figure.image {
+  box-shadow: 0 4px 8px 0 rgba(0, 0, 0, 0.2), 0 6px 20px 0 rgba(0, 0, 0, 0.19);
+}
+
+#book label>span.icon {
+  margin-left: 0.2rem;
+}
+
+#tableMode {
+  table-layout: fixed;
+}
+
+.tabs strong {
+  padding-right: 0.2rem;
+}
+
+.tabs ul {
+  width: 100%;
+  flex-direction: row;
+  flex-wrap: wrap;
+}
+
+div.modal figure.image {
+  margin-bottom: 1.5rem;
+}
+
+#TableOutput {
+  padding-bottom: 0.5rem;
+}
+
+footer {
+  padding-top: 1rem !important;
+  padding-bottom: 1rem !important;
+}
+
+/* Disable dark mode — always use light theme */
+:root {
+  color-scheme: light only;
+}

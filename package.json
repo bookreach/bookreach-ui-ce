@@ -1,10 +1,16 @@
 {
-  "dependencies": {
-    "elm-format": "^0.8.5",
-    "elm-test": "^0.19.1-revision7"
-  },
   "devDependencies": {
-    "elm-live": "^4.0.2",
-    "json-server": "^0.17.0"
+    "bulma": "^1.0.1",
+    "elm": "^0.19.1-6",
+    "elm-format": "^0.8.6",
+    "elm-test": "^0.19.1-revision12",
+    "elm-watch": "^2.0.0-beta.2",
+    "sass": "^1.77.6"
+  },
+  "scripts": {
+    "start": "elm-watch hot",
+    "build-bulma": "sass --load-path=node_modules br-bulma.scss public/br-bulma.css",
+    "test": "ELM_HOME=~/.elm elm-test",
+    "format": "elm-format src/ --yes"
   }
 }

@@ -1,0 +1,16 @@
+// Set your brand colors
+$br-orange: #D17523;
+$br-brown: #4D4223;
+
+// Path to Bulma's sass folder
+@use "bulma/sass" with ($family-primary: '"Zen Maru Gothic", sans-serif',
+    $text: $br-brown,
+    $primary: $br-orange,
+    $link: #175676,
+    $info: #5BC0EB,
+    $success: #9BC53D,
+    $warning: #FDE74C,
+    $danger: #BA324f);
+
+// Import the Google Font
+@import url("https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@400;700&display=swap");
